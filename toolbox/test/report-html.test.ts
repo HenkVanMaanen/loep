@@ -13,6 +13,7 @@ import type { PageShot } from "../src/lib/page-shots.ts";
 import { pageLabels } from "../src/lib/report-markdown.ts";
 import type { Evaluation } from "../src/lib/evaluation.ts";
 import { exampleEvaluation } from "./fixtures/example-evaluation.ts";
+import { weighed } from "./fixtures/weighed.ts";
 
 const run = promisify(execFile);
 /** A picture of the first page with a mark for every finding that points at a place on it. */
@@ -49,7 +50,7 @@ test("the same evaluation gives the same HTML, byte for byte", () => {
 });
 
 test("the HTML has one h1 and never skips a heading level", () => {
-  for (const evaluation of [exampleEvaluation(), grouped()]) {
+  for (const evaluation of [exampleEvaluation(), grouped(), weighed(grouped())]) {
     const levels = headingLevels(renderHtml(evaluation));
     assert.equal(levels.filter((level) => level === 1).length, 1, "one h1");
     assert.equal(levels[0], 1, "the h1 comes first");
@@ -77,7 +78,7 @@ test("the table of contents marks no row as current: the design system shows tha
 });
 
 test("every id is unique, every link inside the report lands, and every finding can be reached", () => {
-  for (const evaluation of [exampleEvaluation(), grouped()]) {
+  for (const evaluation of [exampleEvaluation(), grouped(), weighed(grouped())]) {
     const html = renderHtml(evaluation, undefined, pictures(evaluation));
     const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]!);
     assert.deepEqual(ids.filter((id, index) => ids.indexOf(id) !== index), [], "no id twice");
@@ -104,11 +105,61 @@ test("nldd lint finds nothing, also with the rule that everything comes from the
   const dir = mkdtempSync(join(tmpdir(), "report-html-"));
   const file = join(dir, "rapport.html");
   // Linked, not embedded: inside the page the linter cannot tell the system's stylesheet from one of the report.
-  const evaluation = grouped();
-  writeFileSync(file, renderHtml(evaluation, undefined, pictures(evaluation), { embed: false, pageShots: shots(evaluation) }));
-  const result = await run(process.execPath, [LINT, "lint", "--pure", "--format", "json", file], { cwd: dir }).catch((error: { stdout: string }) => error);
-  const findings = (JSON.parse(result.stdout) as { findings: { rule: string; severity: string; message: string }[] }).findings;
-  assert.deepEqual(findings.filter((finding) => finding.severity !== "hint").map((finding) => `${finding.rule}: ${finding.message}`), []);
+  for (const evaluation of [grouped(), weighed(grouped())]) {
+    writeFileSync(file, renderHtml(evaluation, undefined, pictures(evaluation), { embed: false, pageShots: shots(evaluation) }));
+    const result = await run(process.execPath, [LINT, "lint", "--pure", "--format", "json", file], { cwd: dir }).catch((error: { stdout: string }) => error);
+    const findings = (JSON.parse(result.stdout) as { findings: { rule: string; severity: string; message: string }[] }).findings;
+    assert.deepEqual(findings.filter((finding) => finding.severity !== "hint").map((finding) => `${finding.rule}: ${finding.message}`), []);
+  }
+});
+
+test("a weighed report says in the summary who is stopped at which core task, and at each finding what happens per group", () => {
+  const evaluation = weighed(grouped());
+  const full = renderHtml(evaluation, undefined, pictures(evaluation));
+  const html = full.slice(full.indexOf("<body>"), full.indexOf("<script>"));
+  const stopped = evaluation.defects!.filter((defect) => defect.severity === "blokkerend");
+  assert.ok(stopped.length > 0);
+  // The summary: a heading, the answer in one line, what a core task is, then a card per task with the task as a heading.
+  assert.match(html, /<nldd-title size="4" heading-level="3" text="Wie loopt vast"><\/nldd-title><nldd-spacer size="8"><\/nldd-spacer><nldd-text size="lg" weight="medium">Bij beide kerntaken loopt een groep bezoekers vast\.<\/nldd-text>/);
+  assert.ok(html.includes("<nldd-text>Een kerntaak is iets waarvoor bezoekers naar de site komen. Het onderzoek heeft de kerntaken uit de site afgeleid."));
+  // Who is stopped and why are sentences of their own; the defects are a list of rows that lead to the work list, one tab stop each.
+  assert.match(html, /<nldd-card><nldd-container padding="24" sm-padding="16"><nldd-title size="5" heading-level="4" text="Een vergunning aanvragen"><\/nldd-title><nldd-spacer size="12"><\/nldd-spacer><nldd-text weight="medium">Mensen die niet zien lopen hier vast\.<\/nldd-text><nldd-spacer size="4"><\/nldd-spacer><nldd-text>Zonder dit onderdeel is de aanvraag niet te versturen\.<\/nldd-text><nldd-spacer size="12"><\/nldd-spacer><nldd-list accessible-label="Waardoor ze vastlopen" appearance="box-tinted"><nldd-list-item href="#VRB-G-\w+"><nldd-text-cell text="[^"]+"><\/nldd-text-cell><nldd-icon-cell icon="chevron-right"[^>]*><\/nldd-icon-cell><\/nldd-list-item><nldd-list-item href="#VRB-G-\w+">/);
+  for (const defect of stopped) assert.ok(html.includes(`<nldd-list-item href="#${defect.id}">`), defect.id);
+  // On a wide screen the cards stand in two columns, on a narrow one in one.
+  assert.match(html, /<nldd-container layout="lanes" column-count="2" sm-column-count="1" gap="24"><nldd-card>/);
+  // What stops a group only together says so before its rows, and what the section can not show is said in smaller letters.
+  assert.match(html, /text="Bij elke kerntaak"><\/nldd-title><nldd-spacer size="12"><\/nldd-spacer><nldd-text weight="medium">Mensen die slecht zien lopen hier vast door gebreken die samenkomen\.<\/nldd-text>(?:(?!<nldd-card>).)*<nldd-text>Geen van deze gebreken houdt hen alleen tegen:<\/nldd-text><nldd-spacer size="12"><\/nldd-spacer><nldd-list /);
+  assert.ok(html.includes('<nldd-text size="sm" color="secondary">Deze lijst komt uit één weging door een taalmodel. Bij een tweede weging kan er een enkel gebrek bij komen of af vallen. Elke bevinding is apart gewogen. '));
+  // What explains a table stands under it: the consequences as a list of terms, then where the groups come from.
+  assert.match(html, /<\/nldd-table><nldd-spacer size="8"><\/nldd-spacer><nldd-text size="sm" color="secondary">De tabel telt per kerntaak de gebreken met elke ernst\./);
+  assert.ok(html.includes("<nldd-rich-text><dl><dt>Kan het niet</dt><dd>Langs de eigen manier van werken is er geen weg.</dd><dt>Alleen met een omweg</dt><dd>De bezoeker moet een andere weg zoeken, zoals een andere pagina.</dd><dt>Met extra moeite</dt><dd>De eigen weg werkt, maar kost meer tijd of zoeken.</dd></dl></nldd-rich-text>"));
+  assert.ok(html.includes('<nldd-text size="sm" color="secondary">De laatste kolom telt de criteria die voor deze groep nodig zijn'));
+  // The tables per core task and per group have a row header and numbers set to the right; every group of the standard has a row.
+  assert.match(html, /<nldd-table accessible-label="Gebreken per kerntaak" [^>]*><nldd-table-row slot="header"><nldd-text-cell text="Kerntaak"><\/nldd-text-cell><nldd-text-cell text="Blokkerend" horizontal-alignment="right">/);
+  assert.match(html, /<nldd-table accessible-label="Gebreken per groep" [^>]*><nldd-table-row slot="header"><nldd-text-cell text="Groep"><\/nldd-text-cell><nldd-text-cell text="Kan het niet" horizontal-alignment="right">/);
+  assert.match(html, /<nldd-text-cell row-header vertical-alignment="top" text="Mensen die niet zien"><\/nldd-text-cell><nldd-text-cell horizontal-alignment="right" vertical-alignment="top" text="\d+">/);
+  assert.ok(html.includes('text="Mensen die gevoelig zijn voor flitsen"'));
+  assert.ok(!html.includes('text="Zwaarste gebreken"'), "with a weighing the summary says who is stopped instead");
+  // A defect in the work list says who is hit hardest in a line, and names the core task; the full account per group stands with the finding.
+  assert.ok(html.includes("<p>Mensen die niet zien kunnen dit niet gebruiken. Ook één andere groep heeft er last van. Kerntaak: Een vergunning aanvragen.</p>"));
+  assert.match(html, /<strong>Wie heeft er last van<\/strong><\/p><p>Mensen die niet zien kunnen dit niet gebruiken\. Ze gaan met de schermlezer van kop naar kop door de pagina\. Het onderdeel heeft geen naam, dus ze weten niet wat het is\.<\/p><p>/);
+  assert.ok(html.includes("<p>Dit deel is nodig voor de kerntaak “Een vergunning aanvragen”. Zonder dit onderdeel is de aanvraag niet te versturen. Daarom is de ernst blokkerend.</p>"));
+  assert.ok(html.includes("<p>De ernst kan anders uitvallen. Of dezelfde tekst ook elders op de pagina staat, is niet bekend.</p>"));
+  assert.match(html, /<p>Uit de bevinding blijkt geen gevolg voor een groep bezoekers\.<\/p><p>Mensen die [^<]+ krijgen hier hetzelfde als andere bezoekers\. /);
+  assert.ok(!/Niet vastgesteld:|Dit hoort bij|van de drie gevolgen/.test(html));
+});
+
+test("without a stopped task the account is short and stands beside the table per core task", () => {
+  const evaluation = weighed(grouped());
+  evaluation.weighing!.together = [];
+  for (const finding of evaluation.criteria.flatMap((criterion) => criterion.findings)) if (finding.weighing!.task !== null && finding.weighing!.affected.some((entry) => entry.consequence === "cannot")) Object.assign(finding.weighing!, { task: null, blocksNl: undefined });
+  const full = renderHtml(evaluation);
+  const html = full.slice(full.indexOf("<body>"), full.indexOf("<script>"));
+  assert.match(html, /<nldd-one-half-one-half-section padding-top="0"><nldd-container slot="left"><nldd-title size="4" heading-level="3" text="Wie loopt vast"><\/nldd-title><nldd-spacer size="8"><\/nldd-spacer><nldd-text size="lg" weight="medium">Bij geen van de 2 kerntaken loopt een groep bezoekers vast\.<\/nldd-text>(?:(?!<\/nldd-container>).)*<\/nldd-container><nldd-container slot="right"><nldd-title size="4" heading-level="3" text="Gebreken per kerntaak">/);
+  assert.ok(!html.includes('<nldd-list accessible-label="Waardoor ze vastlopen"'), "no card without a stopped task");
+  // The headings stay in order: no level is skipped.
+  const levels = headingLevels(full);
+  for (const [index, level] of levels.entries()) if (index > 0) assert.ok(level <= levels[index - 1]! + 1, `heading ${index} jumps from ${levels[index - 1]} to ${level}`);
 });
 
 test("the report is the same in its own page and as a fragment; only the frame differs", () => {
@@ -201,4 +252,32 @@ test("the tag with the verification of a finding is a few words, since a tag doe
   const labels = [...html.matchAll(/<nldd-tag [^>]*text="([^"]+)"/g)].map((match) => match[1]!);
   assert.ok(labels.length > 0);
   for (const label of labels.filter((text) => !text.startsWith("Leverancier: "))) assert.ok(label.length <= 30, `tag "${label}" is ${label.length} characters`);
+});
+
+test("a defect card shows the severity of the defect, and says which finding gives it when that is not the one shown", () => {
+  // The search field without a name is also reported as a field without a label, so one defect holds two findings.
+  const twice = (): Evaluation => {
+    const example = exampleEvaluation();
+    const search = example.criteria.find((criterion) => criterion.id === "4.1.2")!.findings.find((finding) => finding.component === "zoekveld")!;
+    Object.assign(example.criteria.find((criterion) => criterion.id === "3.3.2")!, { outcome: "failed", findings: [{ ...search, id: "VRB-3.3.2-zoek", criterion: "3.3.2", titleNl: "Zoekveld heeft alleen een voorbeeldtekst" }] });
+    example.defects = mergeFindings(example);
+    return weighed(example);
+  };
+  const evaluation = twice();
+  // The finding the card shows in full weighs lighter than the other finding of the defect.
+  const defect = evaluation.defects!.find((entry) => entry.findingIds.length > 1)!;
+  const findings = evaluation.criteria.flatMap((criterion) => criterion.findings);
+  const main = findings.find((finding) => finding.id === defect.mainFindingId)!;
+  const other = findings.find((finding) => defect.findingIds.includes(finding.id) && finding.id !== main.id)!;
+  Object.assign(main, { severity: "laag", weighing: { task: null, affected: [{ group: "no-vision", consequence: "effort", textNl: "Ze horen het veld zonder naam." }] } });
+  Object.assign(other, { severity: "blokkerend", weighing: { task: "aanvragen", blocksNl: "Zonder dit veld is de aanvraag niet te versturen.", affected: [{ group: "no-vision", consequence: "cannot", textNl: "Ze horen niet wat het veld vraagt." }] } });
+  Object.assign(defect, { severity: "blokkerend", weighing: { task: "aanvragen", blocksNl: other.weighing!.blocksNl, affected: other.weighing!.affected } });
+  const full = renderHtml(evaluation, undefined, pictures(evaluation));
+  const card = full.slice(full.indexOf(`<nldd-card id="${defect.id}"`), full.indexOf("</nldd-card>", full.indexOf(`<nldd-card id="${defect.id}"`)));
+  assert.ok(card.includes('text="Ernst: blokkerend"') && !card.includes('text="Ernst: laag"'), "the tag is the severity of the defect");
+  assert.ok(card.includes(`<p>De ernst blokkerend komt van bevinding <a href="#${other.id}">${other.id}</a>.</p>`));
+  // The same severity on the main finding: nothing to explain.
+  const same = twice();
+  for (const finding of same.criteria.flatMap((criterion) => criterion.findings)) if (same.defects!.find((entry) => entry.findingIds.length > 1)!.findingIds.includes(finding.id)) finding.severity = "blokkerend";
+  assert.ok(!renderHtml(same, undefined, pictures(same)).includes("komt van bevinding"));
 });

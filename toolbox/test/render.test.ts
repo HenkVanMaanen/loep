@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { groupsFor } from "../src/lib/groups.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +15,7 @@ import { deriveReport, renderMarkdown } from "../src/lib/report-markdown.ts";
 import { makePdf, TEMPLATES, tool, unshownCheck, unshownPattern, unshownTexts, unshownWarning } from "../src/lib/typst.ts";
 import { SEVERITIES } from "../src/lib/verdict.ts";
 import { exampleEvaluation } from "./fixtures/example-evaluation.ts";
+import { weighed } from "./fixtures/weighed.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
@@ -718,7 +720,7 @@ test("the Markdown report has no stray punctuation, empty brackets or placeholde
   const stray = [/\. \./, /[^.]\.\.(?!\.)/, /: \./, /, \./, /\(\s*\)/, /\bnull\b/, /\bundefined\b/, /\bNaN\b/, /\b0 (vraagt|vragen|is|zijn) (een mens|door dit onderzoek)/];
   const described = withInstruments();
   described.browsers = browserUse("153.0.8010.12", secondBrowserUse(new Map()));
-  for (const [name, evaluation] of [["plain", exampleEvaluation()], ["defects", withDefects()], ["instruments", described]] as const) {
+  for (const [name, evaluation] of [["plain", exampleEvaluation()], ["defects", withDefects()], ["weighed", weighed(withDefects())], ["instruments", described]] as const) {
     const markdown = renderMarkdown(evaluation);
     for (const pattern of stray) assert.doesNotMatch(markdown, pattern, `${name}: ${pattern}`);
   }
@@ -751,6 +753,242 @@ test("a quote in a limitation ends at a whole word, also in an evaluation made b
 test("the report has no em-dashes of its own", () => {
   const dashes = new RegExp(`[${String.fromCharCode(0x2013, 0x2014)}]`);
   assert.ok(!dashes.test(renderMarkdown(exampleEvaluation())));
+  assert.ok(!dashes.test(renderMarkdown(weighed(withDefects()))));
+});
+
+test("a weighed report says per core task which groups are stopped, and counts the defects per task and per group", () => {
+  const evaluation = weighed(withDefects());
+  const markdown = renderMarkdown(evaluation);
+  const summary = markdown.slice(markdown.indexOf("### Wie loopt vast"), markdown.indexOf("### Wat betekent dit"));
+  const stopped = evaluation.defects!.filter((defect) => defect.severity === "blokkerend");
+  assert.ok(stopped.length >= 2, "the example has defects that stop a group");
+  // Who is stopped comes before the scores: it is what a reader with ten minutes needs.
+  assert.ok(markdown.indexOf("### Wie loopt vast") < markdown.indexOf("**WCAG 2.2 niveau A en AA"));
+  // The section gives the answer first, at how many of the core tasks a group is stopped, then what a core task is.
+  assert.ok(summary.startsWith("### Wie loopt vast\n\nBij beide kerntaken loopt een groep bezoekers vast.\n\nEen kerntaak is iets waarvoor bezoekers naar de site komen. Het onderzoek heeft de kerntaken uit de site afgeleid. Vastlopen betekent dat een groep iets niet kan wat voor de taak nodig is.\n"), summary);
+  // Under the task: who is stopped there and why the task can not be finished, then the defects, heaviest first.
+  assert.ok(summary.includes(`**Een vergunning aanvragen**\n\nMensen die niet zien lopen hier vast. Zonder dit onderdeel is de aanvraag niet te versturen. Dat komt door deze gebreken:\n\n${stopped.map((defect) => `- [${defect.titleNl}](#${defect.id})`).join("\n")}\n`), summary);
+  // Findings that stop a group only together stand with their task, and say that none of them does alone.
+  const together = evaluation.weighing!.together!;
+  assert.equal(together.length, 1);
+  assert.match(summary, /\*\*Bij elke kerntaak\*\*\n\nMensen die slecht zien lopen hier vast door gebreken die samenkomen\. Na de eerste omweg stuiten ze op het tweede onderdeel, en daarna is er geen weg meer naar het formulier\. Geen van deze gebreken houdt hen alleen tegen:\n\n- \[[^\]]+\]\(#VRB-G-\w+\)\n- \[[^\]]+\]\(#VRB-G-\w+\)\n/);
+  // It changes no severity: what stops a group together is not blokkerend.
+  for (const id of together[0]!.findings) assert.notEqual(evaluation.criteria.flatMap((criterion) => criterion.findings).find((finding) => finding.id === id)!.severity, "blokkerend");
+  // Something stops a group at every task, so no task is called free of it.
+  assert.ok(!summary.includes("geen gebrek waardoor een groep vastloopt"));
+  // What the section can not show is said with it: findings are weighed one by one, and criteria without a verdict can hide more.
+  assert.ok(summary.includes("Deze lijst komt uit één weging door een taalmodel. Bij een tweede weging kan er een enkel gebrek bij komen of af vallen. Elke bevinding is apart gewogen. Dat meer gebreken op dezelfde weg een groep samen tegenhouden, staat hier alleen als het uit de bevindingen bleek. Over 4 criteria heeft het onderzoek nog geen oordeel; ook daar kan een groep vastlopen."));
+  // What stops a group at a core task alone is what the table calls blokkerend: the two lists are the same defects.
+  const derived = deriveReport(evaluation);
+  const alone = derived.weighing!.stopped.flatMap((task) => task.causes.filter((cause) => !cause.together));
+  assert.deepEqual([...new Set(alone.flatMap((cause) => cause.defects.map((defect) => defect.id)))].sort(), stopped.map((defect) => defect.id).sort());
+  for (const cause of derived.weighing!.stopped.flatMap((task) => task.causes)) assert.ok((cause.whyNl.length > 0 || cause.defects.every((defect) => defect.whyNl.length > 0)) && /lopen hier vast( door gebreken die samenkomen)?\.$/.test(cause.whoNl), cause.whoNl);
+
+  // Per core task the defects of each severity; what belongs to every task and to none has a row of its own.
+  assert.ok(summary.includes("| Kerntaak | Blokkerend | Midden | Laag |\n| --- | ---: | ---: | ---: |\n| Een vergunning aanvragen | 2 | 0 | 0 |\n| Contact opnemen | 0 | 0 | 0 |\n| Elke kerntaak | 0 | 2 | 0 |\n| Geen kerntaak | 0 | 0 | 2 |\n"), summary);
+  // "Hoog" has no column: such a defect belongs to no core task, and the sentence above the table says where those are.
+  assert.equal(derived.weighing!.tasks.reduce((total, row) => total + row.counts.reduce((sum, value) => sum + value, 0), 0), evaluation.defects!.filter((defect) => defect.severity !== "hoog").length, "every other defect stands in one row");
+  assert.ok(evaluation.defects!.every((defect) => defect.severity !== "hoog" || defect.weighing!.task === null));
+  // Per group, a defect counts once, with the worst that happens to that group. Every group of the standard has a row,
+  // also one no defect names, with the criteria that are essential for it and still open.
+  // What each consequence means stands as a list under the first sentence, not as labels in a paragraph.
+  assert.ok(summary.includes("De tabel telt per groep bezoekers hoeveel gebreken haar hinderen, en met welk gevolg.\n\n- Kan het niet: langs de eigen manier van werken is er geen weg.\n- Alleen met een omweg: de bezoeker moet een andere weg zoeken, zoals een andere pagina.\n- Met extra moeite: de eigen weg werkt, maar kost meer tijd of zoeken.\n\nDe laatste kolom telt de criteria"), summary);
+  assert.ok(summary.includes("| Groep | Kan het niet | Alleen met een omweg | Met extra moeite | Criteria nog open |\n| --- | ---: | ---: | ---: | ---: |\n| Alle bezoekers | 0 | 0 | 1 |  |\n| Mensen die niet zien | 2 | 1 | 1 | "), summary);
+  assert.equal(derived.weighing!.groups.length, 11);
+  assert.match(summary, /\| Mensen die gevoelig zijn voor flitsen \| 0 \| 0 \| 0 \| \d+ \|/);
+  for (const row of derived.weighing!.groups) assert.ok(row.cannot + row.detour + row.effort <= evaluation.defects!.length, row.groupNl);
+  const openFor = (group: string): number => evaluation.criteria.filter((criterion) => criterion.outcome === "cantTell" && groupsFor(criterion.id)!.primary.includes(group as never)).length;
+  assert.equal(derived.weighing!.groups.find((row) => row.groupNl === "Mensen die slecht zien")!.open, openFor("low-vision"));
+  assert.ok(openFor("low-vision") > 0, "the example has an open criterion that is essential for a group");
+
+  // The work list says in a line who is hit hardest and how many other groups, and names the core task as a fact.
+  assert.match(markdown, /- <a id="VRB-G-\w+"><\/a>blokkerend: \*\*Statuspictogram zonder tekstalternatief\*\* \(VRB-G-\w+\)\n  - Hoofdcriterium 1\.1\.1\. Pagina's: P04\.\n  - Mensen die niet zien kunnen dit niet gebruiken\. Ook één andere groep heeft er last van\.\n  - Kerntaak: Een vergunning aanvragen\n/);
+  const who = (id: string): string => derived.weighing!.ofDefect[evaluation.defects!.find((defect) => defect.findingIds.includes(id))!.id]!.whoNl;
+  const findings = evaluation.criteria.flatMap((criterion) => criterion.findings);
+  assert.ok(findings.some((finding) => /^Mensen die [^.]+ kunnen dit alleen met een omweg gebruiken\. Ook één andere groep heeft er last van\.$/.test(who(finding.id))), findings.map((finding) => who(finding.id)).join("\n"));
+  assert.ok(findings.some((finding) => /^Mensen die [^.]+ en mensen die [^.]+ kunnen dit gebruiken, maar het kost extra moeite\.$/.test(who(finding.id))));
+  assert.ok(findings.some((finding) => who(finding.id) === "Uit de bevindingen blijkt geen gevolg voor een groep bezoekers."));
+  // How the severity came about is said with the other notes on reliability, per finding as the step records it.
+  assert.ok(markdown.includes("De ernst van een bevinding volgt uit wat per bevinding is vastgelegd"));
+  assert.ok(markdown.includes("is afgeleid uit de bevinding en niet met hulpsoftware of met bezoekers waargenomen"));
+  assert.ok(!markdown.includes("Zwaarste gebreken"), "with a weighing the summary says who is stopped instead of listing the heaviest defects");
+});
+
+test("without a weighing the report says why: not run, made for other findings, or from before the step existed", () => {
+  const notRun = withDefects();
+  notRun.weighing = { status: "not-run" };
+  assert.ok(renderMarkdown(notRun).includes("De ernst van een gebrek is de hoogste ernst die de beoordelaars aan zijn bevindingen gaven. De stap die per bevinding vastlegt welke groepen bezoekers ze hindert, is niet uitgevoerd."));
+  const stale = withDefects();
+  stale.weighing = { status: "stale", reason: "findings" };
+  assert.ok(renderMarkdown(stale).includes("Er is een weging van de bevindingen per groep bezoekers, maar die is niet toegepast: ze is gemaakt voor andere bevindingen dan deze."));
+  stale.weighing = { status: "stale", reason: "unchecked" };
+  assert.ok(renderMarkdown(stale).includes("maar die is niet toegepast: ze is niet gecontroleerd, of na de controle gewijzigd."));
+  // An evaluation from before the step says nothing about a step that did not exist.
+  const old = renderMarkdown(withDefects());
+  assert.ok(old.includes("De ernst van een gebrek is de hoogste ernst die de beoordelaars aan zijn bevindingen gaven.") && !/De stap die per bevinding vastlegt/.test(old));
+  for (const evaluation of [notRun, stale, withDefects()]) {
+    const markdown = renderMarkdown(evaluation);
+    assert.ok(!markdown.includes("Wie loopt vast") && markdown.includes("### Zwaarste gebreken"), "without a weighing the summary lists the heaviest defects");
+  }
+});
+
+test("what stops a group at every core task leaves no task free, and a task alone is named when it is", () => {
+  const evaluation = weighed(withDefects());
+  // Nothing stops a group together any more: the one task without a stopping defect is named.
+  evaluation.weighing!.together = [];
+  const one = renderMarkdown(evaluation);
+  assert.ok(one.includes("Bij 1 van de 2 kerntaken loopt een groep bezoekers vast.\n"));
+  assert.ok(one.includes("Bij de andere kerntaak, “Contact opnemen”, loopt op de onderzochte pagina's geen groep vast. Wat daar een omweg of extra moeite geeft, staat in de werklijst."));
+  // Without any defect that stops a group, the report says so of every task.
+  const calm = weighed(withDefects());
+  calm.weighing!.together = [];
+  for (const finding of calm.criteria.flatMap((criterion) => criterion.findings)) if (finding.weighing!.task !== null && finding.weighing!.affected.some((entry) => entry.consequence === "cannot")) Object.assign(finding.weighing!, { task: null, blocksNl: undefined });
+  // The headline counts the tasks and the table per core task names them, so the sentence does not name them again.
+  const quiet = renderMarkdown(calm);
+  assert.ok(quiet.includes("### Wie loopt vast\n\nBij geen van de 2 kerntaken loopt een groep bezoekers vast.\n"));
+  assert.ok(quiet.includes("Het onderzoek vond op de onderzochte pagina's geen gebrek waardoor een groep vastloopt. Wat een omweg of extra moeite geeft, staat in de werklijst."));
+  assert.ok(quiet.includes("\n| Een vergunning aanvragen | ") && quiet.includes("\n| Contact opnemen | "));
+  // A defect that stops a group at every task: no task is free, so the sentence about the other tasks is left out.
+  const everywhere = weighed(withDefects());
+  everywhere.weighing!.together = [];
+  const first = everywhere.criteria.flatMap((criterion) => criterion.findings)[0]!;
+  first.weighing!.task = "all";
+  const markdown = renderMarkdown(everywhere);
+  assert.ok(markdown.includes("Bij beide kerntaken loopt een groep bezoekers vast.\n"));
+  assert.ok(markdown.includes("**Bij elke kerntaak**\n\nMensen die niet zien lopen hier vast. Zonder dit onderdeel is de aanvraag niet te versturen. Dat komt door het gebrek ["));
+  assert.ok(!markdown.includes("geen gebrek waardoor een groep vastloopt"));
+});
+
+test("a reason for a stopped task is never put with a group it was not written for", () => {
+  const evaluation = weighed(withDefects());
+  evaluation.weighing!.together = [];
+  // Two defects at one task that stop different groups, each with its own reason.
+  const stopping = evaluation.criteria.flatMap((criterion) => criterion.findings).filter((finding) => finding.weighing!.task === "aanvragen");
+  assert.equal(stopping.length, 2);
+  stopping[1]!.weighing!.affected = [{ group: "limited-manipulation", consequence: "cannot", textNl: "Ze bedienen de pagina met het toetsenbord. Het filter werkt alleen door te slepen." }];
+  stopping[1]!.weighing!.blocksNl = "Het filter van de aanvraag werkt alleen door te slepen.";
+  const markdown = renderMarkdown(evaluation);
+  const summary = markdown.slice(markdown.indexOf("### Wie loopt vast"), markdown.indexOf("Het onderzoek vond"));
+  assert.match(summary, /Mensen die niet zien lopen hier vast\. Zonder dit onderdeel is de aanvraag niet te versturen\. Dat komt door het gebrek \[[^\]]+\]\(#VRB-G-\w+\)\.\n\nMensen die hun handen moeilijk gebruiken lopen hier vast\. Het filter van de aanvraag werkt alleen door te slepen\. Dat komt door het gebrek \[/);
+});
+
+test("two defects that stop the same group each keep their own reason, under the finding that stops the group", () => {
+  const evaluation = weighed(withDefects());
+  evaluation.weighing!.together = [];
+  const findings = evaluation.criteria.flatMap((criterion) => criterion.findings);
+  const [one, main] = findings.filter((finding) => finding.weighing!.task === "aanvragen");
+  const first = evaluation.defects!.find((defect) => defect.findingIds.includes(one!.id))!;
+  const second = evaluation.defects!.find((defect) => defect.findingIds.includes(main!.id))!;
+  assert.deepEqual([second.mainFindingId, second.findingIds.length], [main!.id, 2]);
+  // In the second defect the finding it is named after costs a group effort; its other finding stops the group, for a reason of its own.
+  const other = findings.find((finding) => second.findingIds.includes(finding.id) && finding.id !== main!.id)!;
+  main!.weighing = { task: null, affected: [{ group: "no-hearing", consequence: "cannot", textNl: "Ze lezen de pagina. Het geluid bij het veld heeft geen tekst." }], withoutNl: "Zonder het geluid is de aanvraag nog te versturen." };
+  main!.severity = "hoog";
+  other.weighing = { task: "aanvragen", blocksNl: "Zonder naam weet de bezoeker niet wat het veld vraagt.", affected: [{ group: "no-vision", consequence: "cannot", textNl: "Ze horen een veld zonder naam." }, { group: "low-vision", consequence: "effort", textNl: "Ze zoeken het veld op de vergrote pagina." }] };
+  other.severity = "blokkerend";
+  second.weighing = { task: "aanvragen", blocksNl: other.weighing.blocksNl!, affected: [other.weighing.affected[0]!, main!.weighing.affected[0]!, other.weighing.affected[1]!] };
+  const markdown = renderMarkdown(evaluation);
+  const summary = markdown.slice(markdown.indexOf("### Wie loopt vast"), markdown.indexOf("Het onderzoek vond"));
+  // The same group, another reason: the paragraph names the group once and each defect says why, under the finding that stops the group.
+  assert.notEqual(other.titleNl, second.titleNl);
+  assert.ok(
+    summary.includes(
+      `**Een vergunning aanvragen**\n\nMensen die niet zien lopen hier vast. Dat komt door deze gebreken:\n\n- [${first.titleNl}](#${first.id}). Zonder dit onderdeel is de aanvraag niet te versturen.\n- [${other.titleNl}](#${second.id}). Zonder naam weet de bezoeker niet wat het veld vraagt.\n`,
+    ),
+    summary,
+  );
+  // A group that can not use a part of the defect no task needs is not said to be stopped: not in the summary, and not in the work list.
+  assert.ok(!summary.includes("niet horen"));
+  assert.equal(deriveReport(evaluation).weighing!.ofDefect[second.id]!.whoNl, "Mensen die niet zien kunnen dit niet gebruiken. Ook 2 andere groepen hebben er last van.");
+});
+
+test("a group that can not use a part no core task needs stands beside the tasks, with how the tasks still work", () => {
+  const evaluation = weighed(withDefects());
+  // The fixture's finding of this kind shares a defect with one that stops a group; here it stands alone.
+  const findings = evaluation.criteria.flatMap((criterion) => criterion.findings);
+  const beside = findings.find((finding) => finding.weighing!.withoutNl !== undefined)!;
+  assert.equal(beside.severity, "hoog");
+  const defect = evaluation.defects!.find((entry) => entry.findingIds.includes(beside.id))!;
+  for (const id of defect.findingIds.filter((id) => id !== beside.id)) Object.assign(findings.find((finding) => finding.id === id)!, { severity: "laag", weighing: { task: null, affected: [{ group: "no-vision", consequence: "effort", textNl: "Ze horen het veld zonder naam." }] } });
+  Object.assign(defect, { severity: "hoog", weighing: { task: null, affected: beside.weighing!.affected, withoutNl: beside.weighing!.withoutNl } });
+  const markdown = renderMarkdown(evaluation);
+  const summary = markdown.slice(markdown.indexOf("### Wat een groep niet kan, buiten de kerntaken"), markdown.indexOf("### Gebreken per kerntaak"));
+  assert.ok(summary.includes(`| [${defect.titleNl}](#${defect.id}) | `), summary);
+  assert.ok(summary.includes("Dit gebrek heeft ernst hoog: een groep kan het deel niet gebruiken, maar de kerntaken lukken zonder. De gebreken met een lichtere ernst ("));
+  assert.ok(markdown.includes("Bij dezelfde ernst staat in de werklijst eerst wat bij een kerntaak hoort. Het ene gebrek met ernst hoog hoort bij geen kerntaak en staat onder “Wat een groep niet kan, buiten de kerntaken”."));
+  const card = markdown.slice(markdown.indexOf(`###### ${beside.id} `), markdown.indexOf("<a id=", markdown.indexOf(`###### ${beside.id} `)));
+  // The finding stands under another criterion than its defect, so its card is set close: the same facts in running text.
+  assert.ok(card.includes(" Kerntaak: geen."));
+  assert.ok(card.includes(" Zonder dit onderdeel is de aanvraag nog te versturen en is contact nog op te nemen. Daarom is de ernst hoog en niet blokkerend.\n"), card);
+  // A weighing from before the sentence existed says it in general words.
+  delete beside.weighing!.withoutNl;
+  assert.ok(renderMarkdown(evaluation).includes(" De kerntaken van de site lukken ook zonder dit deel. Daarom is de ernst hoog en niet blokkerend.\n"));
+});
+
+test("a weighed finding says per group what happens and why that gives its severity; without a weighing it says what the judge wrote", () => {
+  const evaluation = weighed(withDefects());
+  const markdown = renderMarkdown(evaluation);
+  const findings = evaluation.criteria.flatMap((criterion) => criterion.findings);
+  const card = (id: string): string => markdown.slice(markdown.indexOf(`###### ${id} `), markdown.indexOf("<a id=", markdown.indexOf(`###### ${id} `)));
+  const first = findings[0]!;
+  assert.ok(
+    card(first.id).includes(
+      "**Wie heeft er last van**\n\nMensen die niet zien kunnen dit niet gebruiken. Ze gaan met de schermlezer van kop naar kop door de pagina. Het onderdeel heeft geen naam, dus ze weten niet wat het is.\n\nAlle bezoekers kunnen dit gebruiken, maar het kost extra moeite. Ze klikken op het onderdeel om verder te gaan. Er gebeurt pas bij de tweede klik iets.\n",
+    ),
+    card(first.id),
+  );
+  // The highest step: the core task as a fact, and in the reason why the task can not be finished.
+  assert.ok(card(first.id).includes("- Kerntaak: Een vergunning aanvragen\n"));
+  assert.ok(card(first.id).includes("\nDit deel is nodig voor de kerntaak “Een vergunning aanvragen”. Zonder dit onderdeel is de aanvraag niet te versturen. Daarom is de ernst blokkerend.\n"));
+  assert.ok(!card(first.id).includes(first.impactNl), "the weighing stands in the place of what the judge wrote");
+  // A detour: the reason names the group that has to take another way, and says that no group is stopped.
+  const detour = card(findings.find((finding) => finding.severity === "midden")!.id);
+  assert.ok(detour.includes("- Kerntaak: elke kerntaak\n"));
+  assert.match(detour, /kunnen dit alleen met een omweg gebruiken\. Ze gaan met de schermlezer van kop naar kop door de pagina\./);
+  assert.match(detour, /\nGeen groep loopt hier vast, maar mensen die [^.]+ moeten een andere weg nemen\. Daarom is de ernst midden\.\n/);
+  // More effort, with a fact that is missing: the report says what that means for the severity. An account without a full stop gets one.
+  const effort = card(findings.find((finding) => finding.weighing!.unsureNl !== undefined)!.id);
+  assert.ok(effort.includes("kost tijd om te vinden.\n\nElke groep komt er langs de eigen weg, maar het kost meer moeite. Daarom is de ernst laag.\n\nDe ernst kan anders uitvallen. Of dezelfde tekst ook elders op de pagina staat, is niet bekend.\n"), effort);
+  assert.ok(effort.includes("- Kerntaak: geen\n"));
+  // No group hindered: a sentence per group the criterion is essential for, and why the finding stays.
+  const none = card(findings.find((finding) => finding.weighing!.affected.length === 0)!.id);
+  assert.match(none, /Uit de bevinding blijkt geen gevolg voor een groep bezoekers\.\n\nMensen die [^.]+ krijgen hier hetzelfde als andere bezoekers\. Ze krijgen langs de eigen weg dezelfde tekst te horen of te zien\.\n/);
+  assert.ok(none.includes("\nHet blijft een afwijking van de norm, dus de ernst is laag.\n"));
+  // One group: the reason goes on about "ze".
+  const single = weighed(withDefects());
+  const lone = single.criteria.flatMap((criterion) => criterion.findings).find((finding) => finding.severity === "midden")!;
+  lone.weighing!.affected = lone.weighing!.affected.slice(0, 1);
+  assert.ok(renderMarkdown(single).includes("\nZe lopen hier niet vast, maar moeten een andere weg nemen. Daarom is de ernst midden.\n"));
+  // The severity on a card is the one the report sorts on, for every finding.
+  for (const finding of findings) assert.ok(card(finding.id).includes(`Ernst: ${finding.severity}`) && new RegExp(`(Daarom is de ernst|dus de ernst is) ${finding.severity}( en niet blokkerend)?\\.`).test(card(finding.id)), finding.id);
+  // No label with a value in the account, and nothing that reads as a form.
+  for (const finding of findings) assert.ok(!/Niet vastgesteld:|Dit hoort bij|van de drie gevolgen/.test(card(finding.id)), finding.id);
+  // Without a weighing: the judge's own words.
+  const plain = withDefects();
+  assert.ok(renderMarkdown(plain).includes(`**Wie heeft er last van**\n\n${plain.criteria.flatMap((criterion) => criterion.findings)[0]!.impactNl}`));
+});
+
+test("within one severity the work list puts what visitors need for a core task first", () => {
+  const evaluation = weighed(withDefects());
+  const derived = deriveReport(evaluation);
+  const order = derived.defects!.fix.flatMap((group) => group.defectIds).map((id) => evaluation.defects!.find((defect) => defect.id === id)!);
+  for (const owner of new Set(order.map((defect) => defect.owner))) {
+    const own = order.filter((defect) => defect.owner === owner);
+    for (const [index, defect] of own.entries()) {
+      const next = own[index + 1];
+      if (!next) continue;
+      const rank = (severity: string): number => (SEVERITIES as readonly string[]).indexOf(severity);
+      assert.ok(rank(defect.severity) <= rank(next.severity), "heaviest first");
+      if (defect.severity === next.severity) assert.ok(Number(defect.weighing!.task !== null) >= Number(next.weighing!.task !== null), `${defect.id} before ${next.id}: a core task first`);
+    }
+  }
+  // Two defects of one severity: the one at a core task leads, also with fewer pages.
+  const [beside, core] = [evaluation.defects![0]!, evaluation.defects![1]!];
+  Object.assign(beside, { severity: "midden", pages: ["P01", "P02", "P03"], weighing: { task: null, affected: [] } });
+  Object.assign(core, { severity: "midden", pages: ["P01"], weighing: { task: "aanvragen", affected: [] } });
+  Object.assign(core, { owner: beside.owner });
+  const sorted = deriveReport(evaluation).defects!.fix.flatMap((group) => group.defectIds);
+  assert.ok(sorted.indexOf(core.id) < sorted.indexOf(beside.id));
 });
 
 /**
@@ -836,7 +1074,7 @@ test("the PDF is made for an evaluation with and without defects, passes its che
   described.scope.frames = SCOPE_FRAMES;
   described.browsers = browserUse("153.0.8010.12", [{ browser: "webkit", version: "26.0 build 2359", commands: new Set(["name", "taborder"]), count: 7 }]);
   described.judgment.models = AGENT_MODELS;
-  for (const [name, evaluation] of [["plain", exampleEvaluation()], ["defects", withDefects()], ["instruments", described]] as const) {
+  for (const [name, evaluation] of [["plain", exampleEvaluation()], ["defects", withDefects()], ["weighed", weighed(withDefects())], ["instruments", described]] as const) {
     if (name === "defects") {
       evaluation.criteria.flatMap((criterion) => criterion.findings)[0]!.verification = { status: "reproduced", evidence: [] };
       evaluation.measuredStates = { P01: ["menu-open"] };
@@ -853,6 +1091,11 @@ test("the PDF is made for an evaluation with and without defects, passes its che
     const text = await tool("pdftotext", ["-layout", result.pdf, "-"]);
     if (text.found) {
       const pages = text.stdout.split("\f").filter((page) => page.trim() !== "");
+      // Only a weighed evaluation says who is stopped at which core task, and why a finding has its severity.
+      const flat = text.stdout.replace(/\s+/g, " ");
+      assert.equal(flat.includes("Wie loopt vast"), name === "weighed", `${name}: the part on who is stopped`);
+      assert.equal(flat.includes("Gebreken per groep"), name === "weighed", name);
+      if (name === "weighed") for (const expected of ["Een vergunning aanvragen", "Mensen die niet zien kunnen dit niet gebruiken.", "Dit deel is nodig voor de kerntaak", "Zonder dit onderdeel is de aanvraag niet te versturen.", "lopen hier vast door gebreken die samenkomen", "Elke bevinding is apart gewogen.", "Gebreken per kerntaak", "Bij beide kerntaken loopt een groep bezoekers vast.", "Met extra moeite: de eigen weg werkt", "De ernst kan anders uitvallen. Of dezelfde tekst ook elders", "krijgen hier hetzelfde als andere bezoekers", "Kerntaak"]) assert.ok(flat.includes(expected), `weighed: the PDF says "${expected}"`);
       assert.ok(pages[0]!.includes("Gemaakt met loep 0.0.1, commit 000000000000"), `${name}: the cover says what made the report`);
       assert.deepEqual(pages.slice(1).filter((page) => !page.includes("Gemaakt met loep 0.0.1")).length, 0, `${name}: every page says what made the report`);
     }

@@ -88,6 +88,10 @@ const USAGE = `loep <command> [options]
                                          Group findings about the same place into defects, and write the task for
                                          the optional step that proposes what else belongs together
   check-merge --run <run>                Validate the proposal of that step; non-zero exit on problems
+  weigh --run <run>                      Write the task for the step that records, per finding, which groups of visitors it
+                                         hinders, what happens to them and for which core task; apply a weighing that
+                                         passed check-weigh, so the severity of each finding follows from those facts
+  check-weigh --run <run>                Validate the weighing of that step; non-zero exit on problems
   answer --run <run> --criterion <id> [--point <n> --did <text> --outcome passed|failed|inapplicable --name <who> --role <function>]
                                          For an open point that asks a person or a choice of the owner: record what a person
                                          did or decided and what follows for the criterion. Without --point: list the open
@@ -693,6 +697,11 @@ async function main(): Promise<void> {
       const { merge } = await import("./commands/merge.ts");
       const result = await merge(values.run, values.previous);
       process.stdout.write(`${result.defects} gebreken, ${result.findings} bevindingen onder ${result.criteria} criteria (vaste regels: ${result.byRules}; voorstel: ${result.proposal === "applied" ? "toegepast" : "niet uitgevoerd"})\n${result.task}\n`);
+      // Grouping the findings again can leave a weighing behind that was made for other defects: say so here.
+      if (result.weighed && result.weighed.findings > 0) {
+        const { weighingLineNl } = await import("./commands/weigh.ts");
+        process.stdout.write(`${weighingLineNl(result.weighed)}\n`);
+      }
       return;
     }
     case "check-merge": {
@@ -701,6 +710,23 @@ async function main(): Promise<void> {
       const problems = await checkMerge(values.run);
       for (const problem of problems) process.stdout.write(`- ${problem}\n`);
       process.stdout.write(problems.length === 0 ? "OK: het voorstel voldoet aan de regels\n" : `${problems.length} problemen\n`);
+      process.exitCode = problems.length === 0 ? 0 : 1;
+      return;
+    }
+    case "weigh": {
+      if (!values.run) throw new Error("weigh needs --run <run>");
+      const { weigh } = await import("./commands/weigh.ts");
+      const result = await weigh(values.run);
+      const { weighingLineNl } = await import("./commands/weigh.ts");
+      process.stdout.write(`${result.findings} bevindingen; ${weighingLineNl(result)}\n${result.weighing === "applied" ? `${result.task}\n` : ""}`);
+      return;
+    }
+    case "check-weigh": {
+      if (!values.run) throw new Error("check-weigh needs --run <run>");
+      const { checkWeigh } = await import("./commands/weigh.ts");
+      const problems = await checkWeigh(values.run);
+      for (const problem of problems) process.stdout.write(`- ${problem}\n`);
+      process.stdout.write(problems.length === 0 ? "OK: de weging voldoet aan de regels\n" : `${problems.length} problemen\n`);
       process.exitCode = problems.length === 0 ? 0 : 1;
       return;
     }

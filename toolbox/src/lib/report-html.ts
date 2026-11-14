@@ -25,6 +25,8 @@ import {
   type OpenGroup,
   type ReportDerived,
   type ShownOutcome,
+  type FindingWeighingDerived,
+  type WeighingDerived,
 } from "./report-markdown.ts";
 
 /**
@@ -513,6 +515,127 @@ function fingerprintImage({ evaluation, derived }: Context, attrs: Element["attr
   return el({ tag: "nldd-image", attrs: { src: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`, alt, width, "aspect-ratio": `${width}/${height}`, "object-fit": "contain", loading: "eager", ...attrs } });
 }
 
+/** The name of a list of the defects that stop a group, for a screen reader: on screen the rows under the reason say it. */
+const STOPPED_BY = "Waardoor ze vastlopen";
+
+/** A row of a list that links to a defect or a finding further on. */
+const linkRow = (id: string, titleNl: string, supporting: string): string =>
+  el({
+    tag: "nldd-list-item",
+    attrs: { href: `#${id}` },
+    children: [el({ tag: "nldd-text-cell", attrs: { text: plain(titleNl), "supporting-text": supporting ? plain(supporting) : undefined } }), el({ tag: "nldd-icon-cell", attrs: { icon: "chevron-right", size: 20, color: "secondary" } })].join(""),
+  });
+
+/** Blocks two by two, side by side on a wide screen; one left over gets the width. */
+function halves(blocks: string[]): string[] {
+  const sections: string[] = [];
+  for (let index = 0; index < blocks.length; index += 2) {
+    const [left, right] = [blocks[index]!, blocks[index + 1]];
+    sections.push(
+      right === undefined
+        ? el({ tag: "nldd-simple-section", attrs: { "padding-top": 0 }, children: left })
+        : el({ tag: "nldd-one-half-one-half-section", attrs: { "padding-top": 0 }, children: [stack(left, { slot: "left" }), stack(right, { slot: "right" })].join("") }),
+    );
+  }
+  return sections;
+}
+
+/**
+ * What the weighing adds to the summary, only when the findings were weighed: at which core task
+ * a group is stopped and why, what a group can not use beside the tasks, and the defects counted
+ * per core task and per group. The answer comes first, each stopped task is a card of its own, and
+ * what explains a table stands under it in smaller letters.
+ */
+function weighingSections(context: Context): string[] {
+  const { derived, defects } = context;
+  const weighing = derived.weighing!;
+  const labels = REPORT_TEXT.weighing;
+  const where = (id: string): string => {
+    const defect = defects.get(id)!;
+    return `${[defect.mainCriterion, ...defect.alsoCriteria].join(", ")} · ${derived.defects!.pagesNl[id]}`;
+  };
+  // Per core task a card: who is stopped, why, and the defects as rows that lead to them in the work list.
+  const card = (task: WeighingDerived["stopped"][number]): string =>
+    el({
+      tag: "nldd-card",
+      children: stack(
+        [
+          title(task.taskNl, 4, 5),
+          ...task.causes.flatMap((cause, index) => {
+            // What stops a group only together says so before the rows; a single cause needs no words to say the rows are why.
+            const lead = cause.together ? (cause.defects.length === 1 ? `${labels.togetherOne}:` : labels.togetherMore) : null;
+            return [
+              spacer(index === 0 ? 12 : 28),
+              text(attr(cause.whoNl), { weight: "medium" }),
+              ...(cause.whyNl ? [spacer(4), text(inline(cause.whyNl))] : []),
+              ...(lead ? [spacer(8), text(attr(lead))] : []),
+              spacer(12),
+              el({
+                tag: "nldd-list",
+                attrs: { "accessible-label": STOPPED_BY, appearance: "box-tinted" },
+                // Only the reason of a defect, when each has its own: where it is and under which criteria stands in the work list the row leads to.
+                children: cause.defects.map((defect) => linkRow(defect.id, defect.titleNl, defect.whyNl)).join(""),
+              }),
+            ];
+          }),
+        ].join(""),
+        { padding: 24, "sm-padding": 16 },
+      ),
+    });
+  const notes = [weighing.notStoppedNl ? text(inline(weighing.notStoppedNl)) : "", weighing.notStoppedNl ? spacer(8) : "", text(inline(weighing.limitsNl), { size: "sm", color: "secondary" })].join("");
+  const head = [title(labels.stopped, 3, 4), spacer(8), text(attr(weighing.headlineNl), { size: "lg", weight: "medium" }), spacer(8), text(inline(weighing.introNl))].join("");
+  const stopped =
+    weighing.stopped.length > 0
+      ? el({
+          tag: "nldd-simple-section",
+          attrs: { "padding-top": 0 },
+          children: [head, spacer(24), stack(weighing.stopped.map(card).join(""), { layout: "lanes", "column-count": 2, "sm-column-count": 1, gap: 24 }), spacer(24), notes].join(""),
+        })
+      : null;
+  const beside = weighing.beside
+    ? [
+        title(labels.beside, 3, 4),
+        spacer(12),
+        el({ tag: "nldd-list", attrs: { "accessible-label": labels.beside, appearance: "box-base" }, children: weighing.beside.defectIds.map((id) => linkRow(id, defects.get(id)!.titleNl, where(id))).join("") }),
+        spacer(8),
+        text(inline(weighing.beside.noteNl), { size: "sm", color: "secondary" }),
+      ].join("")
+    : null;
+  const perTask = [
+    title(labels.perTask, 3, 4),
+    spacer(12),
+    table(
+      labels.perTask,
+      // The name of a severity is one word: its column is at least as wide as that word, so it does not break in the middle.
+      labels.taskColumns.map((label, index) => (index === 0 ? { label, track: "minmax(8rem, 3fr)" } : { label, track: "minmax(max-content, 1fr)", numeric: true })),
+      weighing.tasks.map((row) => ({ cells: [row.taskNl, ...row.counts.map(String)] })),
+    ),
+    spacer(8),
+    text(inline(weighing.tasksIntroNl), { size: "sm", color: "secondary" }),
+  ].join("");
+  const number = { track: "minmax(4.5rem, 1fr)", numeric: true };
+  const perGroup = [
+    title(labels.perGroup, 3, 4),
+    spacer(8),
+    text(attr(labels.perGroupIntro)),
+    spacer(12),
+    table(
+      labels.perGroup,
+      labels.columns.map((label, index) => (index === 0 ? { label, track: "minmax(10rem, 3fr)" } : { label, ...number })),
+      weighing.groups.map((row) => ({ cells: [row.groupNl, String(row.cannot), String(row.detour), String(row.effort), row.open === null ? "" : String(row.open)] })),
+    ),
+    spacer(16),
+    // What the three consequences mean, as terms with their meaning, then where the groups come from.
+    rich(facts(labels.consequences.map((meaning, index): [string, string] => [labels.columns[index + 1]!, attr(upperFirst(meaning))]))),
+    spacer(12),
+    text(attr(labels.perGroupNote), { size: "sm", color: "secondary" }),
+  ].join("");
+  const meaning = [title("Wat betekent dit", 3, 4), spacer(8), rich(derived.meaningNl.map((paragraph) => `<p>${inline(paragraph)}</p>`).join(""))].join("");
+  // Without a stopped task the account is short, and stands beside the table per core task.
+  const blocks = [...(stopped ? [] : [[head, spacer(16), notes].join("")]), ...(beside ? [beside] : []), perTask, perGroup, meaning];
+  return [...(stopped ? [stopped] : []), ...halves(blocks)];
+}
+
 function topList(context: Context): string {
   const { derived, defects } = context;
   if (derived.defects) {
@@ -523,16 +646,7 @@ function topList(context: Context): string {
         tag: "nldd-list",
         attrs: { "accessible-label": "Zwaarste gebreken", appearance: "box-base" },
         children: top
-          .map((defect) =>
-            el({
-              tag: "nldd-list-item",
-              attrs: { href: `#${defect.id}` },
-              children: [
-                el({ tag: "nldd-text-cell", attrs: { text: plain(defect.titleNl), "supporting-text": plain(`Ernst ${defect.severity} · ${[defect.mainCriterion, ...defect.alsoCriteria].join(", ")} · ${derived.defects!.pagesNl[defect.id]}`) } }),
-                el({ tag: "nldd-icon-cell", attrs: { icon: "chevron-right", size: 20, color: "secondary" } }),
-              ].join(""),
-            }),
-          )
+          .map((defect) => linkRow(defect.id, defect.titleNl, `Ernst ${defect.severity} · ${[defect.mainCriterion, ...defect.alsoCriteria].join(", ")} · ${derived.defects!.pagesNl[defect.id]}`))
           .join(""),
       }),
       spacer(8),
@@ -546,13 +660,7 @@ function topList(context: Context): string {
       tag: "nldd-list",
       attrs: { "accessible-label": "Zwaarste bevindingen", appearance: "box-base" },
       children: top
-        .map((finding) =>
-          el({
-            tag: "nldd-list-item",
-            attrs: { href: `#${finding.id}` },
-            children: [el({ tag: "nldd-text-cell", attrs: { text: plain(finding.titleNl), "supporting-text": plain(`Ernst ${finding.severity} · ${finding.criterion} · ${finding.pagesAffected}`) } }), el({ tag: "nldd-icon-cell", attrs: { icon: "chevron-right", size: 20, color: "secondary" } })].join(""),
-          }),
-        )
+        .map((finding) => linkRow(finding.id, finding.titleNl, `Ernst ${finding.severity} · ${finding.criterion} · ${finding.pagesAffected}`))
         .join(""),
     }),
     spacer(8),
@@ -592,7 +700,11 @@ function summary(context: Context): string {
         stack([numberCards(context), ...(derived.defects ? [spacer(12), text(`Het onderzoek vond ${inline(derived.defects.countsNl)}.`, { color: "secondary" })] : []), ...(context.frame === "standalone" ? [spacer(24), fingerprintImage(context)] : [])].join(""), { slot: "right" }),
       ].join(""),
     }),
-    el({
+    // With a weighing the summary says who is stopped where; without one it lists the heaviest defects.
+    ...(derived.defects && derived.weighing
+      ? weighingSections(context)
+      : [
+      el({
       tag: "nldd-one-half-one-half-section",
       attrs: { "padding-top": 0 },
       children: [
@@ -600,6 +712,7 @@ function summary(context: Context): string {
         stack([title("Wat betekent dit", 3, 4), spacer(8), rich(derived.meaningNl.map((paragraph) => `<p>${inline(paragraph)}</p>`).join(""))].join(""), { slot: "right" }),
       ].join(""),
     }),
+        ]),
     el({
       tag: "nldd-simple-section",
       attrs: { "padding-top": 0 },
@@ -699,22 +812,33 @@ export function firstSentence(value: string): string {
  * The short form of a finding on a card: the start of the fix, and a button to the rest. The rest
  * stands right under it, hidden: the button shows it in a sheet, and printing shows it in place.
  */
-function findingBrief(finding: ReportFinding, titleNl: string, titles: Map<string, string>, level: number): string {
+function findingBrief(finding: ReportFinding, titleNl: string, titles: Map<string, string>, level: number, weighed?: FindingWeighingDerived): string {
   const start = firstSentence(finding.fixNl);
   return [
     rich(`<p><strong>Oplossing:</strong> ${inline(start)}${start.length < finding.fixNl.replace(/\s+/g, " ").trim().length ? " \u2026" : ""}</p>`, { spacing: "tight" }),
     spacer(12),
     el({ tag: "nldd-button", attrs: { id: `meer-${finding.id}`, appearance: "secondary", size: "sm", text: "Meer", "accessible-label": `Meer over ${plain(titleNl)}`, "popup-type": "dialog", "end-icon": "chevron-right" } }),
-    el({ tag: "nldd-container", attrs: { id: `details-${finding.id}`, hidden: true, "padding-top": 16 }, children: findingText(finding, titles, level + 1) }),
+    el({ tag: "nldd-container", attrs: { id: `details-${finding.id}`, hidden: true, "padding-top": 16 }, children: findingText(finding, titles, level + 1, weighed) }),
+  ].join("");
+}
+
+/** Who a finding hinders: per group a paragraph that starts with what happens to it, then why that gives this severity. */
+function whoHtml(weighed: FindingWeighingDerived): string {
+  return [
+    weighed.groups.length > 0
+      ? weighed.groups.map((group) => `<p>${attr(group.leadNl)} ${inline(group.textNl)}</p>`).join("")
+      : `<p>${attr(REPORT_TEXT.weighing.noGroup)}</p>${weighed.unaffected.map((group) => `<p>${attr(group.leadNl)} ${inline(group.textNl)}</p>`).join("")}`,
+    `<p>${inline(weighed.reasonNl)}</p>`,
+    weighed.unsureNl ? `<p>${inline(weighed.unsureNl)}</p>` : "",
   ].join("");
 }
 
 /** What is wrong, who suffers, the fix and where: the four parts every finding has, under labels. */
-function findingText(finding: ReportFinding, titles: Map<string, string>, level: number): string {
+function findingText(finding: ReportFinding, titles: Map<string, string>, level: number, weighed?: FindingWeighingDerived): string {
   return rich(
     [
       `${subhead("Wat is er mis", level)}<p>${inline(finding.observedNl)}</p>`,
-      `${subhead("Wie heeft er last van", level)}<p>${inline(finding.impactNl)}</p>`,
+      `${subhead("Wie heeft er last van", level)}${weighed ? whoHtml(weighed) : `<p>${inline(finding.impactNl)}</p>`}`,
       `${subhead("Oplossing", level)}<p>${inline(finding.fixNl)}</p>`,
       `${subhead("Waar", level)}${list(whereItems(finding, titles))}`,
     ].join(""),
@@ -749,8 +873,13 @@ function defectCard(defect: Defect, context: Context, level: number): string {
   const others = defect.findingIds.filter((id) => id !== defect.mainFindingId);
   const toCriterion = (id: string): string => link(`#${ID.criterion(id)}`, attr(id));
   const criteriaNl = `${attr(REPORT_TEXT.defect.main)} ${toCriterion(defect.mainCriterion)}${defect.alsoCriteria.length > 0 ? `, ${attr(REPORT_TEXT.defect.also.toLowerCase())} ${defect.alsoCriteria.map(toCriterion).join(", ")}` : ""}`;
+  const weighed = derived.weighing?.ofDefect[defect.id];
+  const whoNl = weighed ? `<p>${inline(weighed.whoNl)}${weighed.taskNl ? ` ${attr(REPORT_TEXT.weighing.task)}: ${inline(weighed.taskNl)}.` : ""}</p>` : "";
+  // The card shows the main finding in full. Another finding of the defect can weigh heavier: then the card says which one gives the severity.
+  const heaviest = [main, ...others.map((id) => findings.get(id)!)].find((finding) => finding.severity === defect.severity);
+  const fromNl = heaviest && heaviest.id !== main.id ? `<p>De ernst ${attr(defect.severity)} komt van bevinding ${link(`#${heaviest.id}`, attr(heaviest.id))}.</p>` : "";
   const meta = rich(
-    `<p>${criteriaNl}.${main.component ? ` Onderdeel: ${inline(main.component)}.` : ""} Pagina's: ${attr(derived.defects!.pagesNl[defect.id]!.replace(/\.$/, ""))}. ${others.length > 0 ? `Ook ${others.length === 1 ? "bevinding" : "bevindingen"} ${others.map((id) => link(`#${id}`, attr(id))).join(", ")}.` : ""}</p>`,
+    `<p>${criteriaNl}.${main.component ? ` Onderdeel: ${inline(main.component)}.` : ""} Pagina's: ${attr(derived.defects!.pagesNl[defect.id]!.replace(/\.$/, ""))}. ${others.length > 0 ? `Ook ${others.length === 1 ? "bevinding" : "bevindingen"} ${others.map((id) => link(`#${id}`, attr(id))).join(", ")}.` : ""}</p>${whoNl}${fromNl}`,
     { spacing: "tight" },
   );
   return el({
@@ -760,12 +889,12 @@ function defectCard(defect: Defect, context: Context, level: number): string {
       [
         title(defect.titleNl, level, 4, { "supporting-text": `${defect.id} · bevinding ${defect.mainFindingId}`, id: main.id }),
         spacer(12),
-        tags(findingFacts(main, derived)),
+        tags([severityTag(defect.severity), ...findingFacts(main, derived).slice(1)]),
         spacer(12),
         meta,
         ...(pictures[main.id] ? [spacer(16), picture(main, pictures)] : []),
         spacer(16),
-        findingBrief(main, defect.titleNl, titles, level),
+        findingBrief(main, defect.titleNl, titles, level, derived.weighing?.ofFinding[main.id]),
       ].join(""),
       { padding: 24, "sm-padding": 16 },
     ),
@@ -1144,7 +1273,7 @@ function findingUnderCriterion(finding: ReportFinding, context: Context): string
         rich(`<p>${finding.component ? `Onderdeel: ${inline(finding.component)}. ` : ""}Pagina's: ${inline(sentence(finding.pagesAffected))}${defectNl ? ` ${defectNl}` : ""}</p>`, { spacing: "tight" }),
         ...(pictures[finding.id] ? [spacer(16), picture(finding, pictures)] : []),
         spacer(16),
-        findingBrief(finding, finding.titleNl, titles, 6),
+        findingBrief(finding, finding.titleNl, titles, 6, derived.weighing?.ofFinding[finding.id]),
       ].join(""),
       { padding: 20, "sm-padding": 16 },
     ),
@@ -1341,7 +1470,7 @@ function reliability({ evaluation, derived }: Context): string {
       derived.chain.stepsNl.length > 0 ? `<h3 id="werkwijze">Werkwijze</h3>${list(derived.chain.stepsNl.map((step) => `<strong>${attr(step.nameNl)}.</strong> ${inline(step.textNl)}`), true)}` : "",
       `<p>${inline(derived.disagreementNl)}</p>`,
       gate && gate.acceptedNl.length + gate.limitationsNl.length > 0 ? `<p>Wat de bewijspoort heeft vastgesteld:</p>${list([...gate.acceptedNl, ...gate.limitationsNl].map(inline))}` : "",
-      derived.defects ? `<p>${inline(derived.defects.mergeNl)}</p>` : "",
+      derived.defects ? `<p>${inline(derived.defects.mergeNl)}</p><p>${inline(derived.defects.severityNl)}</p>` : "",
       derived.generalLimitationsNl.length > 0 ? `<p>Beperkingen van dit onderzoek:</p>${list(derived.generalLimitationsNl.map(inline))}` : "",
       derived.procedureLimitations > 0 ? `<p>Bij ${derived.procedureLimitations === 1 ? "1 criterium" : `${derived.procedureLimitations} criteria`} heeft de procedure een eigen beperking. ${attr(REPORT_TEXT.procedureLimits)}</p>` : "",
     ].join(""),

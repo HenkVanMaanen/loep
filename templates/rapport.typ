@@ -24,6 +24,8 @@
 #let findings = criteria.map(c => c.findings).flatten()
 // Findings grouped into things to repair; absent in an evaluation from before that step existed.
 #let grouping = derived.defects
+// Who each finding and each defect hinders and at which core task; none when the step that weighs the findings did not run.
+#let weighing = derived.weighing
 #let defects = evaluation.at("defects", default: ())
 #let defect-by-id = defects.fold((:), (acc, defect) => {
   acc.insert(defect.id, defect)
@@ -152,6 +154,16 @@
   }))#h(0.25em)#text(weight: 600, upper(level.first()) + level.slice(1))]
 
 #let eyebrow(body) = text(size: 8.5pt, weight: 600, fill: muted, body)
+// The facts of a finding under its title: a label with its value on a row of its own, so each is found at a glance.
+#let card-facts(rows) = {
+  set text(size: 9pt)
+  grid(
+    columns: (auto, 1fr),
+    column-gutter: 10pt,
+    row-gutter: 4.5pt,
+    ..rows.filter(row => row != none).map(((name, value)) => (eyebrow(name), value)).flatten(),
+  )
+}
 
 #let finding-link(finding) = link(label(finding.id), mono(finding.id, size: 0.86em))
 #let criterion-link(id, body) = link(label("sc-" + id), body)
@@ -444,13 +456,90 @@
   })
 }
 
+#if grouping != none and weighing != none [
+  == #t.weighing.stopped
+
+  #weighing.headlineNl
+
+  #weighing.introNl
+
+  #for task in weighing.stopped [
+    #heading(level: 3, outlined: false, task.taskNl)
+    #for cause in task.causes [
+      // One defect closes the paragraph as a sentence; more of them stand under it as a list, each with its own reason when they differ.
+      #let causes = cause.defects.map(defect => [#link(label(defect.id), defect.titleNl)#if defect.whyNl != "" [. #prose(defect.whyNl)]])
+      #let (one, more) = if cause.together { (t.weighing.togetherOne, t.weighing.togetherMore) } else { (t.weighing.becauseOne, t.weighing.becauseMore) }
+      #if causes.len() == 1 [
+        #par[#cause.whoNl #prose(cause.whyNl) #one #link(label(cause.defects.first().id), cause.defects.first().titleNl).]
+      ] else [
+        #par[#cause.whoNl #prose(cause.whyNl) #more]
+        #list(..causes)
+      ]
+    ]
+  ]
+
+  #if weighing.notStoppedNl != none { par(weighing.notStoppedNl) }
+
+  #par(weighing.limitsNl)
+]
+
 #if grouping != none [Het onderzoek vond #grouping.countsNl.]
 
 #score-table("2.2")
 #score-table("2.1")
 #text(size: 9pt, fill: muted, derived.scoreNoteNl)
 
-#if grouping != none [
+#let count-cell(value) = text(fill: if value == 0 { muted } else { ink }, str(value))
+
+#if grouping != none and weighing != none [
+  // What stops a group at a core task stands above; here what a group can not use beside the tasks.
+  #if weighing.beside != none [
+    == #t.weighing.beside
+
+    #table(
+      columns: (1fr, 24mm, 27mm),
+      inset: (x: 5pt, y: 3.8pt),
+      table.header(th[Gebrek], th[Criterium], th[Pagina's]),
+      ..weighing.beside.defectIds.map(id => defect-by-id.at(id)).map(defect => (
+        link(label(defect.id), text(weight: 600, defect.titleNl)),
+        {
+          criterion-link(defect.mainCriterion, defect.mainCriterion)
+          if defect.alsoCriteria.len() > 0 { text(size: 8.5pt, fill: muted)[\ #also-criteria(defect)] }
+        },
+        grouping.pagesNl.at(defect.id),
+      )).flatten(),
+    )
+    #text(size: 9pt, fill: muted, weighing.beside.noteNl)
+  ]
+
+  == #t.weighing.perTask
+
+  #weighing.tasksIntroNl
+
+  #table(
+    columns: (1fr, 22mm, 18mm, 16mm),
+    inset: (x: 5pt, y: 3.8pt),
+    align: (x, y) => if x == 0 { left + top } else { right + top },
+    table.header(th(t.weighing.taskColumns.at(0)), ..t.weighing.taskColumns.slice(1).map(th-right)),
+    ..weighing.tasks.map(row => (row.taskNl, ..row.counts.map(count-cell))).flatten(),
+  )
+
+  == #t.weighing.perGroup
+
+  #t.weighing.perGroupIntro
+
+  #list(..t.weighing.consequences.enumerate().map(((index, meaning)) => [#t.weighing.columns.at(index + 1): #meaning]))
+
+  #t.weighing.perGroupNote
+
+  #table(
+    columns: (1fr, 20mm, 26mm, 24mm, 22mm),
+    inset: (x: 5pt, y: 3.8pt),
+    align: (x, y) => if x == 0 { left + top } else { right + top },
+    table.header(th(t.weighing.columns.at(0)), ..t.weighing.columns.slice(1).map(th-right)),
+    ..weighing.groups.map(row => (row.groupNl, count-cell(row.cannot), count-cell(row.detour), count-cell(row.effort), if row.open == none [] else { count-cell(row.open) })).flatten(),
+  )
+] else if grouping != none [
   == Zwaarste gebreken
 
   #{
@@ -546,6 +635,12 @@
           set text(size: 8.5pt, fill: muted)
           id-text(defect.id)
           if defect.findingIds.len() > 1 [ · #defect.findingIds.len() bevindingen: #defect.findingIds.map(id => link(label(id), id-text(id))).join(", ")]
+          let weighed = if weighing == none { none } else { weighing.ofDefect.at(defect.id, default: none) }
+          if weighed != none {
+            linebreak()
+            weighed.whoNl
+            if weighed.taskNl != none [ #t.weighing.task: #weighed.taskNl.]
+          }
         },
         {
           criterion-link(defect.mainCriterion, defect.mainCriterion)
@@ -940,6 +1035,28 @@
   }
 }
 
+// Who a finding hinders. When the findings were weighed: per group what happens, and why that gives this severity.
+#let weighed-of(finding) = if weighing == none { none } else { weighing.ofFinding.at(finding.id, default: none) }
+#let who(finding) = {
+  let weighed = weighed-of(finding)
+  if weighed == none { prose(finding.impactNl) } else {
+    if weighed.groups.len() == 0 { par(t.weighing.noGroup) }
+    for group in if weighed.groups.len() > 0 { weighed.groups } else { weighed.unaffected } { par[#group.leadNl #prose(group.textNl)] }
+    par(prose(weighed.reasonNl))
+    if weighed.unsureNl != none { par(prose(weighed.unsureNl)) }
+  }
+}
+// The same in running text, for a card that is set close.
+#let who-inline(finding) = {
+  let weighed = weighed-of(finding)
+  if weighed == none { prose(finding.impactNl) } else {
+    if weighed.groups.len() == 0 [#t.weighing.noGroup ]
+    (if weighed.groups.len() > 0 { weighed.groups } else { weighed.unaffected }).map(group => [#group.leadNl #prose(group.textNl)]).join(" ")
+    [ #prose(weighed.reasonNl)]
+    if weighed.unsureNl != none [ #prose(weighed.unsureNl)]
+  }
+}
+
 // A finding whose defect is filed under another criterion: the same facts as a full card, set closer together.
 #let compact-card(finding, place, lead: none) = {
   let defect = defect-by-id.at(place.defectId)
@@ -956,14 +1073,19 @@
       )
       show heading.where(level: 5): it => block(above: 6pt, below: 6pt, text(size: 10.5pt, weight: 700, it.body))
       [#heading(level: 5, finding.titleNl) #label(finding.id)]
-      set text(size: 9pt)
-      [#eyebrow[Eigenaar] #finding.owner #h(10pt)#if finding.at("vendorTags", default: ()).len() > 0 [#eyebrow[Raakt] #finding.vendorTags.join(", ") #h(10pt)] #eyebrow[Onderdeel] #or-none(finding.component, "geen") #h(10pt) #eyebrow[Pagina's] #finding.pagesAffected]
-      linebreak()
-      [#eyebrow(t.defect.label) #link(label(defect.id), id-text(defect.id, size: 0.95em)) #h(10pt) #eyebrow(t.defect.main) #criterion-link(defect.mainCriterion, defect.mainCriterion), zie #link(label(defect.mainFindingId), id-text(defect.mainFindingId, size: 0.95em))]
-      if check != none [ #h(10pt) #eyebrow(t.defect.check) #chain.verification.at(check.status)]
+      card-facts((
+        ("Eigenaar", finding.owner),
+        if finding.at("vendorTags", default: ()).len() > 0 { ("Raakt", finding.vendorTags.join(", ")) },
+        ("Onderdeel", or-none(finding.component, "geen")),
+        ("Pagina's", finding.pagesAffected),
+        if weighed-of(finding) != none { (t.weighing.task, weighed-of(finding).taskNl) },
+        (t.defect.label, link(label(defect.id), id-text(defect.id, size: 0.95em))),
+        (t.defect.main, [#criterion-link(defect.mainCriterion, defect.mainCriterion), zie #link(label(defect.mainFindingId), id-text(defect.mainFindingId, size: 0.95em))]),
+        if check != none { (t.defect.check, chain.verification.at(check.status)) },
+      ))
       set text(size: 9.5pt)
       part("Wat is er mis", prose(finding.observedNl))
-      part("Wie heeft er last van", prose(finding.impactNl))
+      part("Wie heeft er last van", who-inline(finding))
       part("Oplossing", prose(finding.fixNl))
       for location in finding.locations {
         // Words of the page first: a heading and a text can be searched for in any source.
@@ -990,35 +1112,48 @@
       )
       show heading.where(level: 5): it => block(above: 7pt, below: 8pt, text(size: 12pt, weight: 700, it.body))
       [#heading(level: 5, finding.titleNl) #label(finding.id)]
-      text(size: 9pt)[#eyebrow[Eigenaar] #finding.owner #h(10pt)#if finding.at("vendorTags", default: ()).len() > 0 [#eyebrow[Raakt] #finding.vendorTags.join(", ") #h(10pt)] #eyebrow[Onderdeel] #or-none(finding.component, "geen") #h(10pt) #eyebrow[Pagina's] #finding.pagesAffected]
       // Which defect the finding belongs to, and under which criterion that defect is filed.
       let place = if grouping == none { none } else { grouping.ofFinding.at(finding.id, default: none) }
+      let defect = if place == none { none } else { defect-by-id.at(place.defectId) }
       let check = finding.at("verification", default: none)
-      if place != none or check != none {
-        linebreak()
-        set text(size: 9pt)
-        if place != none {
-          let defect = defect-by-id.at(place.defectId)
-          [#eyebrow(t.defect.label) #link(label(defect.id), id-text(defect.id, size: 0.95em))]
-          if place.role == "main" [ #h(10pt) #eyebrow(t.defect.main) dit criterium #h(10pt) #eyebrow(t.defect.also) #if defect.alsoCriteria.len() > 0 { defect.alsoCriteria.map(id => criterion-link(id, id)).join(", ") } else [geen ander criterium]]
-          if place.role == "other" [ #h(10pt) #eyebrow(t.defect.main) #criterion-link(defect.mainCriterion, defect.mainCriterion), zie #link(label(defect.mainFindingId), id-text(defect.mainFindingId, size: 0.95em))]
-        }
-        if check != none [ #h(10pt) #eyebrow(t.defect.check) #chain.verification.at(check.status)]
-      }
+      card-facts((
+        ("Eigenaar", finding.owner),
+        if finding.at("vendorTags", default: ()).len() > 0 { ("Raakt", finding.vendorTags.join(", ")) },
+        ("Onderdeel", or-none(finding.component, "geen")),
+        ("Pagina's", finding.pagesAffected),
+        if weighed-of(finding) != none { (t.weighing.task, weighed-of(finding).taskNl) },
+        if defect != none { (t.defect.label, link(label(defect.id), id-text(defect.id, size: 0.95em))) },
+        if place != none and place.role == "main" { (t.defect.main, [dit criterium]) },
+        if place != none and place.role == "main" { (t.defect.also, if defect.alsoCriteria.len() > 0 { defect.alsoCriteria.map(id => criterion-link(id, id)).join(", ") } else [geen ander criterium]) },
+        if place != none and place.role == "other" { (t.defect.main, [#criterion-link(defect.mainCriterion, defect.mainCriterion), zie #link(label(defect.mainFindingId), id-text(defect.mainFindingId, size: 0.95em))]) },
+        if check != none { (t.defect.check, chain.verification.at(check.status)) },
+      ))
     })
     cutout-of(finding)
-    keep(limit: 110mm, grid(
-      columns: (1fr, 1fr),
-      column-gutter: 8mm,
-      [
+    if weighed-of(finding) == none {
+      keep(limit: 110mm, grid(
+        columns: (1fr, 1fr),
+        column-gutter: 8mm,
+        [
+          #heading(level: 6, outlined: false)[Wat is er mis]
+          #prose(finding.observedNl)
+        ],
+        [
+          #heading(level: 6, outlined: false)[Wie heeft er last van]
+          #who(finding)
+        ],
+      ))
+    } else {
+      // With an account per group the right column is much longer than the left: under each other the card breaks between its parts.
+      keep(limit: 110mm, [
         #heading(level: 6, outlined: false)[Wat is er mis]
         #prose(finding.observedNl)
-      ],
-      [
+      ])
+      keep(limit: 110mm, above: 11pt, [
         #heading(level: 6, outlined: false)[Wie heeft er last van]
-        #prose(finding.impactNl)
-      ],
-    ))
+        #who(finding)
+      ])
+    }
     keep(limit: 110mm, above: 11pt, block(width: 100%, fill: white, stroke: (left: 3pt + accent), radius: (right: 3pt), inset: (x: 11pt, top: 2pt, bottom: 10pt), [
       #heading(level: 6, outlined: false)[Oplossing]
       #prose(finding.fixNl)
@@ -1238,6 +1373,8 @@
 }
 
 #if grouping != none { grouping.mergeNl }
+
+#if grouping != none { grouping.severityNl }
 
 #if derived.generalLimitationsNl.len() > 0 [
   == Beperkingen van dit onderzoek
