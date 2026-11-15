@@ -17,13 +17,14 @@ Daarna, in de map van de plugin: `just install` voor de pakketten en browsers, e
 
 Reken op een middag. Voor een site elders met 30 pagina's en vier paginatypen, met drie agents tegelijk, komt de formule achter `estimate` op ruim vier uur, met een marge van ruim drie tot bijna zes uur. Blijven er na de verificatie criteria open, dan komt daar een afmaakronde bij, bij acht open criteria ongeveer een uur. Een onderzoek van ongeveer 30 pagina's met alle criteria kost in de orde van 150 tot 250 dollar aan prijzen van de API: in de nulmeting van 19 oktober 2026 gebruikten 134 agents ongeveer 526 miljoen tokens, waarvan 97 procent uit de cache, voor ongeveer 184 dollar ([validatie/verbruik/README.md](../validatie/verbruik/README.md)). Op een abonnement kan zo'n run een groot deel van de weeklimiet gebruiken; die limiet verschilt per abonnement. `estimate` noemt tokens en kosten voor jouw run. Hoe die getallen tot stand komen, staat in [methode.md](methode.md#hoe-lang-een-onderzoek-duurt). Houd de sessie van de assistent open en de machine wakker zolang het loopt.
 
-## Drie skills
+## Vier skills
 
 | Je zegt bijvoorbeeld | Skill | Wat eruit komt |
 |---|---|---|
 | "Toets https://voorbeeld.nl op toegankelijkheid." | `nldd-a11y-audit` | Een onderzoek met rapport, als concept dat een mens leest en tekent |
 | "Maak de toegankelijkheidsverklaring bij het onderzoek van vorige week." | `nldd-a11y-statement` | Een verklaring volgens het wettelijke model en het invulblad voor het register |
-| "Hoe laat ik zien dat onze site toegankelijk is?" | `nldd-a11y` | Een korte uitleg die naar een van de twee andere wijst |
+| "Zet in onze pipeline een check die zegt of de site slechter is geworden." | `nldd-a11y-quick` | Een snelle meting met een basislijn, en de stap voor de pipeline |
+| "Hoe laat ik zien dat onze site toegankelijk is?" | `nldd-a11y` | Een korte uitleg die naar een van de andere wijst |
 
 Je hoeft de naam van een skill niet te noemen: de assistent kiest haar aan wat je vraagt. Wil je het zeker weten, roep haar dan bij naam aan, in Claude Code met `/nldd-a11y:nldd-a11y-audit https://voorbeeld.nl`.
 
@@ -95,6 +96,39 @@ Verloopt de sessie halverwege, dan stopt de stap en vraagt hij je opnieuw in te 
 
 Noem de map van het vorige onderzoek. Een bevinding op dezelfde plek houdt dan haar nummer, en naast het rapport komt een werkdocument `verschil.md` met wat is opgelost, gebleven en nieuw.
 
+## Een snelle meting in een pipeline
+
+Een onderzoek duurt uren. Voor de vraag "is deze release slechter dan de vorige" is er `quick`: een meting van een paar minuten zonder taalmodel, die je in een pipeline zet. De skill `nldd-a11y-quick` zet haar met je op: de lijst met pagina's, de basislijn en de stap voor je pipeline. Met de hand gaat het zo.
+
+Zet de adressen die je wilt bewaken in een bestand, één per regel, en meet ze:
+
+```
+node toolbox/src/cli.ts quick https://voorbeeld.nl --out runs/snel --urls paginas.txt
+```
+
+In `runs/snel/quick/` staan daarna `samenvatting.md` en `summary.json`. Bewaar `summary.json` als basislijn. Bij de volgende release geef je haar mee:
+
+```
+node toolbox/src/cli.ts quick https://preview.voorbeeld.nl --out runs/snel-2 --urls paginas-preview.txt --baseline basislijn/summary.json
+```
+
+Pagina's worden vergeleken op hun pad, dus een preview op een ander adres kan naast de live site liggen. Het commando eindigt met exitcode 1 als een pagina meer plekken heeft dan in de basislijn die twee of meer meetprogramma's afkeuren of die een proef van loep ziet, of als een pagina uit de basislijn niet gemeten kon worden. Wat één meetprogramma alleen meldt, staat in `verschil.md` en houdt niets tegen, tenzij je `--strict` meegeeft. Exitcode 2 betekent dat de meting zelf is mislukt; dat zegt niets over de site. In `verschil.md` staat wat slechter en wat beter is. Een pagina die slechter lijkt, wordt eerst nog een keer gemeten; alleen wat beide keren slechter is, telt.
+
+Ligt er een cookiemelding over de pagina's, dan zegt de samenvatting dat. Geef de knop die haar sluit mee met `--dismiss "<selector>"`: de meting klikt die na het openen van elke pagina. Zonder dat meten de proeven de melding mee. Is de release goed, dan wordt haar `summary.json` de nieuwe basislijn.
+
+Zonder `--urls` zoekt `quick` zelf hooguit 15 pagina's en trekt daar een steekproef uit. Voor een vergelijking is een vaste lijst beter: dan zijn het elke keer dezelfde pagina's.
+
+Wat je ervan mag verwachten:
+
+- Het meet met vier regelsets in licht en donker. Daarnaast kijkt het of er inhoud buiten beeld valt bij 320 pixels breed, bij 200 procent zoom en bij ruimere tekstafstand, of de volgorde op het scherm afwijkt van de code, of geluid vanzelf start, en loopt het met Tab langs de pagina: is de focus te zien, ligt ze ergens onder, gooit een element haar weg.
+- Wat pas na een handeling verschijnt, zoals een menu of een foutmelding, meet het niet. Formulieren en documenten ook niet, en niemand beoordeelt of een tekstalternatief of kop klopt.
+- Reken op ongeveer een halve minuut per pagina. In de pipeline is alleen Chromium nodig.
+- Op 12 sites met een volledig onderzoek wees deze soort meting ongeveer een kwart van de afgekeurde criteria aan. Een lege lijst zegt dus weinig over de site. Wat ze wel aanwijst, keurde het onderzoek in ruim acht van de tien gevallen ook af.
+- Een melding van één regelset houdt een release niet tegen, ook niet als ze nieuw is. Zulke meldingen kloppen vaak niet.
+- Er wordt niets verstuurd. Een klik met `--dismiss` die een verzoek zou versturen, wordt tegengehouden zoals elk ander.
+
+Een run van `quick` is geen begin van een onderzoek. De inventaris is klein gehouden, en `explore` weigert de map. Een onderzoek begint in een eigen map.
+
 ## De verklaring
 
 Vraag erom zodra het onderzoek is getekend: "Maak de toegankelijkheidsverklaring bij `toegankelijkheid/onderzoeken/2026-10-15`." De assistent controleert eerst of het onderzoek getekend is en sinds het zegel niet is veranderd. Is het niet getekend, dan kan alleen een concept.
@@ -113,4 +147,4 @@ Je krijgt de verklaring en een invulblad met de waarden per stap van de invulass
 - Het rapport met de hand bijwerken of mooier maken dan het is.
 - Een issue versturen zonder dat jij de tekst hebt gelezen en ja hebt gezegd.
 
-Hoe de assistent dit precies doet, staat in [skills/nldd-a11y-audit/SKILL.md](../skills/nldd-a11y-audit/SKILL.md) en [skills/nldd-a11y-statement/SKILL.md](../skills/nldd-a11y-statement/SKILL.md).
+Hoe de assistent dit precies doet, staat in [skills/nldd-a11y-audit/SKILL.md](../skills/nldd-a11y-audit/SKILL.md), [skills/nldd-a11y-statement/SKILL.md](../skills/nldd-a11y-statement/SKILL.md) en [skills/nldd-a11y-quick/SKILL.md](../skills/nldd-a11y-quick/SKILL.md).
