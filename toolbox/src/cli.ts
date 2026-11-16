@@ -116,6 +116,20 @@ const USAGE = `loep <command> [options]
                                          hinders, what happens to them and for which core task; apply a weighing that
                                          passed check-weigh, so the severity of each finding follows from those facts
   check-weigh --run <run>                Validate the weighing of that step; non-zero exit on problems
+  summarize --run <run>                  Write the task for the summary for the leadership: one agent reads the report as text
+                                         (tasks/samenvatting/rapport.md) and writes a few paragraphs that open the report. Once
+                                         that passed check-summary, summarize writes the task of a second reader
+                                         (tasks/samenvatting/lees.md). Only a summary that passed check-summary and that the
+                                         second reader found carried by the report, sentence by sentence, is put into the
+                                         evaluation; without one the report opens as loep writes it. Run it after weigh,
+                                         again after the reader, and before render
+  check-summary --run <run>              Hold that summary to the report: length, status, numbers, words that soften; non-zero
+                                         exit on problems
+  check-reading --run <run>              Hold the reading of the second reader (tasks/samenvatting/lees.md) to the summary and
+                                         the report: a verdict for every sentence as it stands now, each quote literally in the
+                                         report, of at most 300 characters, one place for at most two sentences; lists the
+                                         sentences the report does not carry. Whether a sentence follows from its quote is
+                                         the reader's judgment, not this check. Non-zero exit on a fault in the reading
   answer --run <run> --criterion <id> [--point <n> --did <text> --outcome passed|failed|inapplicable --name <who> --role <function>]
                                          For an open point that asks a person or a choice of the owner: record what a person
                                          did or decided and what follows for the criterion. Without --point: list the open
@@ -807,6 +821,32 @@ async function main(): Promise<void> {
       process.exitCode = problems.length === 0 ? 0 : 1;
       return;
     }
+    case "summarize": {
+      if (!values.run) throw new Error("summarize vraagt --run <run>");
+      const { summarize, summaryLineNl } = await import("./commands/summarize.ts");
+      const result = await summarize(values.run);
+      process.stdout.write(`${summaryLineNl(result)}\n${result.summary === "applied" ? "" : `${result.reason === "unread" ? result.readTask : result.task}\n`}`);
+      return;
+    }
+    case "check-summary": {
+      if (!values.run) throw new Error("check-summary vraagt --run <run>");
+      const { checkSummary } = await import("./commands/summarize.ts");
+      const problems = await checkSummary(values.run);
+      for (const problem of problems) process.stdout.write(`- ${problem}\n`);
+      process.stdout.write(problems.length === 0 ? "OK: de samenvatting houdt zich aan het rapport\n" : `${problems.length} ${problems.length === 1 ? "probleem" : "problemen"}\n`);
+      process.exitCode = problems.length === 0 ? 0 : 1;
+      return;
+    }
+    case "check-reading": {
+      if (!values.run) throw new Error("check-reading vraagt --run <run>");
+      const { checkReading } = await import("./commands/summarize.ts");
+      const { problems, refuted } = await checkReading(values.run);
+      for (const problem of problems) process.stdout.write(`- ${problem}\n`);
+      for (const sentence of refuted) process.stdout.write(`niet gedragen, zin ${sentence.n}: ${sentence.sentence}\n  ${sentence.noteNl}\n`);
+      process.stdout.write(problems.length > 0 ? `${problems.length} ${problems.length === 1 ? "probleem" : "problemen"}\n` : refuted.length > 0 ? `OK: het oordeel is volledig. ${refuted.length === 1 ? "1 zin is" : `${refuted.length} zinnen zijn`} niet gedragen; de samenvatting komt zo niet in het rapport\n` : "OK: het rapport draagt elke zin van de samenvatting\n");
+      process.exitCode = problems.length === 0 ? 0 : 1;
+      return;
+    }
     case "publish": {
       if (!values.run || !values.out) throw new Error("publish needs --run <run> --out <dir>");
       if (values.toon === undefined && (values.live || values.preview !== undefined || values["replace-unseen"] || values["toon-host"] !== undefined || values["toon-url"] !== undefined)) throw new Error("--live, --preview, --replace-unseen, --toon-host en --toon-url horen bij --toon <groep/site>");
@@ -847,6 +887,9 @@ async function main(): Promise<void> {
       const result = await render(values.run);
       process.stdout.write(`${result.markdown}\n${result.html}\n${result.pdf ?? "(geen pdf)"}\n${result.shortPdf ? `${result.shortPdf}\n` : ""}`);
       for (const problem of result.pdfChecks) process.stdout.write(`- ${problem}\n`);
+      // Whoever leads the run sees here whether the summary is in the report that was just written.
+      const summary = (await (await import("./commands/sign.ts")).readEvaluation(join(values.run, "evaluation.json"))).executiveSummary;
+      process.stdout.write(summary?.status === "applied" ? "met de samenvatting voor de leiding\n" : `zonder samenvatting voor de leiding: het rapport opent met de zin van loep${summary ? "; draai summarize om te zien waarom" : ""}\n`);
       for (const note of result.cutoutNotes) process.stdout.write(`- ${note}\n`);
       for (const warning of result.pdfWarnings) process.stdout.write(`LET OP: ${warning}\n`);
       // A report whose PDF fails its own accessibility check is not fit to hand over.

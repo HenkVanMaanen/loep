@@ -149,13 +149,16 @@ test("a weighed report says in the summary who is stopped at which core task, an
   assert.ok(!/Niet vastgesteld:|Dit hoort bij|van de drie gevolgen/.test(html));
 });
 
-test("without a stopped task the account is short and stands beside the table per core task", () => {
+test("without a stopped task the account is short, and the tables per core task and per group stand in the overview of the defects", () => {
   const evaluation = weighed(grouped());
   evaluation.weighing!.together = [];
   for (const finding of evaluation.criteria.flatMap((criterion) => criterion.findings)) if (finding.weighing!.task !== null && finding.weighing!.affected.some((entry) => entry.consequence === "cannot")) Object.assign(finding.weighing!, { task: null, blocksNl: undefined });
   const full = renderHtml(evaluation);
   const html = full.slice(full.indexOf("<body>"), full.indexOf("<script>"));
-  assert.match(html, /<nldd-one-half-one-half-section padding-top="0"><nldd-container slot="left"><nldd-title size="display-4" heading-level="3" text="Wie loopt vast"><\/nldd-title><nldd-spacer size="8"><\/nldd-spacer><nldd-text size="lg" weight="medium">Bij geen van de 2 kerntaken loopt een groep bezoekers vast\.<\/nldd-text>(?:(?!<\/nldd-container>).)*<\/nldd-container><nldd-container slot="right"><nldd-title size="display-4" heading-level="3" text="Gebreken per kerntaak">/);
+  assert.match(html, /<nldd-simple-section padding-top="0"><nldd-title size="display-4" heading-level="3" text="Wie loopt vast"><\/nldd-title><nldd-spacer size="8"><\/nldd-spacer><nldd-text size="lg" weight="medium">Bij geen van de 2 kerntaken loopt een groep bezoekers vast\.<\/nldd-text>/);
+  // The table per core task is in the chapter before the work list, not in the summary.
+  assert.ok(html.indexOf('text="Gebreken per kerntaak"') > html.lastIndexOf('id="overzicht"'), "the tables stand in the overview");
+  assert.ok(html.lastIndexOf('id="overzicht"') < html.lastIndexOf('id="wat-nu"'), "the overview stands before the work list");
   assert.ok(!html.includes('<nldd-list accessible-label="Waardoor ze vastlopen"'), "no card without a stopped task");
   // The headings stay in order: no level is skipped.
   const levels = headingLevels(full);
@@ -198,7 +201,10 @@ test("a page of the sample is shown with a numbered mark at each defect, and the
   const html = renderHtml(evaluation, undefined, pictures(evaluation), { pageShots: shots(evaluation) });
   const section = html.slice(html.indexOf(`id="pagina-${label}"`));
   const svg = section.slice(section.indexOf("<svg"), section.indexOf("</svg>"));
-  assert.match(svg, /role="img" aria-label="Schermafbeelding van [^"]+markering/, "the picture has a text alternative");
+  assert.match(svg, /<g role="img" aria-label="Schermafbeelding van [^"]+markering[^"]*"><image [^>]*\/><\/g>/, "the picture has a text alternative");
+  // No link inside the element with the role of an image: nothing in an image can take focus.
+  assert.doesNotMatch(svg, /role="img"[^>]*>(?:(?!<\/g>).)*<a /, "the marks stand outside the image");
+  assert.doesNotMatch(svg, /<svg[^>]*role="img"/, "the drawing as a whole is no image: it holds the links");
   // A mark is out of the tab order and hidden from assistive technology: the list has the same links, with names (WCAG 2.4.4).
   const marked = [...svg.matchAll(/<a href="#([^"]+)" tabindex="-1" aria-hidden="true">/g)].map((match) => match[1]!);
   assert.equal([...svg.matchAll(/<a /g)].length, marked.length, "every mark is hidden");
