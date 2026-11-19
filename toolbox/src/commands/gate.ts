@@ -12,7 +12,7 @@ import { makeWorkDir } from "../lib/workdir.ts";
 import { notFoundProbes, siteHosts, siteLabel } from "../lib/origins.ts";
 import { uncoveredOperables, type CountedPage } from "../lib/operables.ts";
 import { loadRun, type PageData, type RunData } from "../lib/rundata.ts";
-import { acceptedGapFor, frameAddress, frameEntry, frameStanding, NOT_OPENED_ON_PAGE_TYPE, notOpenedAdviceNl, pageTypeOf, type AcceptedGapDecider, type Component } from "../lib/sitemodel.ts";
+import { acceptedGapFor, frameAddress, frameEntry, frameStanding, NOT_OPENED_ON_PAGE_TYPE, notOpenedAdviceNl, pageTypeOf, REVIEW_STATE_CHECK, type AcceptedGapDecider, type Component } from "../lib/sitemodel.ts";
 import { isLasting, refusedRunNl } from "../session/blockade.ts";
 import { drawMarks } from "../session/marks.ts";
 import { coversContent, type Overlay } from "../session/recipe.ts";
@@ -429,6 +429,25 @@ export function gateChecks(run: RunData): { checks: Check[]; gaps: Gap[]; warnin
       limitationNl: `Bij het vastleggen van deze toestand ${missedNl(state.notLoaded!, true)}. Het beeld en de metingen van deze toestand zijn gemaakt zonder ${state.notLoaded!.length === 1 ? "dat bestand" : "die bestanden"}. Of een bezoeker ${state.notLoaded!.length === 1 ? "het" : "ze"} wel krijgt, is niet vastgesteld.`,
     }));
   add("state-resource-not-loaded", notLoadedGaps, "elke toestand is vastgelegd met de stylesheets en scripts van de site zelf");
+
+  // A page measured while a stylesheet or script of the site itself did not arrive: what was measured is not the page a visitor gets.
+  // A new sweep measures it once more; missed again there, it is a limitation: a file that keeps missing can be the site itself.
+  const pageNotLoadedGaps: Gap[] = [];
+  for (const page of run.pages) {
+    const missed = page.facts.notLoaded ?? [];
+    if (missed.length === 0) continue;
+    const limitationNl = `Bij het meten van deze pagina ${missedNl(missed, true)}. Metingen van deze pagina zijn gedaan zonder ${missed.length === 1 ? "dat bestand" : "die bestanden"}. Of een bezoeker ${missed.length === 1 ? "het" : "ze"} wel krijgt, is niet vastgesteld.`;
+    const place = { check: "page-resource-not-loaded", ...on(page), state: "default" };
+    if (page.facts.notLoadedAgain) limitations.push({ ...place, missingNl: limitationNl });
+    else
+      pageNotLoadedGaps.push({
+        ...place,
+        missingNl: `Bij het meten van deze pagina ${missedNl(missed)}. Metingen van deze pagina zijn daardoor gedaan zonder ${missed.length === 1 ? "dat bestand" : "die bestanden"}, en niet op de pagina zoals een bezoeker haar krijgt. Draai collect opnieuw: dat meet deze pagina nog een keer. Komt het bestand dan weer niet binnen, dan wordt het een beperking.`,
+        fixedBy: "sweep",
+        limitationNl,
+      });
+  }
+  add("page-resource-not-loaded", pageNotLoadedGaps, "elke pagina is gemeten met de stylesheets en scripts van de site zelf");
 
   // 5. The sweep itself must be complete.
   const incomplete: Gap[] = [];
@@ -944,6 +963,18 @@ export function reviewGaps(answers: Answers, sheets: Sheet[]): { gaps: Gap[]; wa
   return { gaps, warnings };
 }
 
+/**
+ * Give each gap of the review about the picture of a state the hash of that picture. The next sweep captures that state again
+ * (`rejectedPictures`), also when the explorer replayed its recipe without changing it: otherwise the same picture comes back and
+ * is rejected again.
+ */
+export async function markRejectedPictures(gaps: Gap[], run: Pick<RunData, "siteStates">, runDir: string): Promise<void> {
+  for (const gap of gaps) {
+    const shot = gap.check === REVIEW_STATE_CHECK ? run.siteStates?.states.find((state) => state.id === gap.state)?.files.screenshot : undefined;
+    if (shot && existsSync(join(runDir, shot))) gap.measured = { ...gap.measured, screenshotSha256: await sha256File(join(runDir, shot)) };
+  }
+}
+
 const STAMP_FILE = join("gate", "answers.stamp.json");
 
 export interface ReviewPart {
@@ -1177,6 +1208,7 @@ export async function gate(runDir: string, outDir: string = runDir): Promise<Gat
   await setAsideStaleAnswers(outDir, parts);
   const answers = await currentAnswers(outDir, sheets);
   const reviewed = answers ? reviewGaps(answers, sheets) : { gaps: [], warnings: [] };
+  await markRejectedPictures(reviewed.gaps, run, runDir);
   const remarks = (answers?.sheets ?? []).flatMap((entry) => (typeof entry.remarkNl === "string" && entry.remarkNl.trim() ? [{ pageType: entry.pageType, remarkNl: entry.remarkNl.trim() }] : []));
 
   // A gap the explorer confirmed as a property of the site does not hold the run back.

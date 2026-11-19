@@ -12,6 +12,7 @@ import type { Change } from "../instruments/change.ts";
 import type { AfterSubmit, TimeLimitProbe, WatchState } from "./timelimits.ts";
 import type { ClipboardWrite } from "../browser/clipboard.ts";
 import type { Placement } from "../browser/session.ts";
+import type { Missed } from "./sweepstamp.ts";
 import { loginForRun, type LoginMark } from "./login.ts";
 import { readsForRun, type ReadRequest } from "./reads.ts";
 import { writesForRun, type WritePermission } from "./writes.ts";
@@ -195,6 +196,10 @@ export interface Facts {
   screenshotClippedAt?: ScreenshotClip;
   /** Set when collect failed on this page, also on its second try: the first line of the error. The other files of the page are then not from this sweep. */
   collectError?: string;
+  /** Stylesheets and scripts of the site that did not arrive while collect measured this page, also not when it was loaded once more. The next collect measures it again. Absent when all arrived. */
+  notLoaded?: Missed[];
+  /** Set with `notLoaded` when this measurement was already the one more try after an earlier one missed a file of the site: the gate makes it a limitation. */
+  notLoadedAgain?: true;
 }
 
 export interface TabStop extends Element {
