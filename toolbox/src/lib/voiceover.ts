@@ -302,7 +302,7 @@ export interface VoiceoverStatus {
   lastStart?: StartRecord;
 }
 
-const readRecord = <T>(path: string): T | null => {
+export const readRecord = <T>(path: string): T | null => {
   try {
     return JSON.parse(readFileSync(path, "utf8")) as T;
   } catch {
@@ -326,6 +326,12 @@ export async function voiceoverStatus(guest: Guest = lumeGuest(), name = VM_NAME
   const [, boot, mark] = answer!;
   const warm = boot !== undefined && mark === boot;
   return { ...status, warm, bootedAt: new Date(booted * 1000).toISOString(), ...(warm ? {} : { notWarm: mark === undefined ? ("noMark" as const) : ("otherBoot" as const) }) };
+}
+
+/** A `start` that still runs on this machine, or null. */
+export function runningStart(name = VM_NAME(), dir = stateDir()): { pid: number; since: string } | null {
+  const starting = readRecord<{ pid: number; since: string }>(startingFile(dir, name));
+  return starting && alive(starting.pid) ? starting : null;
 }
 
 /** Set up on this machine: lume is there and so is the virtual Mac. */
@@ -582,7 +588,7 @@ export interface Waited {
 /** The lock that holds the one virtual Mac for one reading, also against another process of loep. */
 export const lockFile = (name = VM_NAME()): string => join(stateDir(), `${name}.lock`);
 
-const alive = (pid: number): boolean => {
+export const alive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
     return true;

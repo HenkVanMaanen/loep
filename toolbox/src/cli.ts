@@ -725,12 +725,14 @@ async function main(): Promise<void> {
       const { isInstrumentRun, instrumentPending, briefPending, NO_TASKS_NL } = await import("./commands/instrument-tasks.ts");
       if (!isInstrumentRun(values.run)) throw new Error(NO_TASKS_NL);
       const pending = await instrumentPending(values.run);
+      // A run that comes back after a long pause, as on a weekly limit, counts again as a user of the virtual Mac (#665).
+      if (pending.phase !== "done") (await import("./lib/voiceover-users.ts")).renewUser(values.run);
       // In a phase with agents: whether VoiceOver can read, when the virtual Mac is set up. Asked of lume, not read from the run.
       // Running but not warmed up costs a minute to mend and a phase of agents without VoiceOver to leave: it is warmed up from here, in the background (#596).
       const { voiceoverStatus, voiceoverWarningNl, warmUpDue } = await import("./lib/voiceover.ts");
       const status = pending.phase === "done" ? null : await voiceoverStatus();
       const warming = status !== null && warmUpDue(status);
-      if (warming) (await import("./commands/voiceover.ts")).startInBackground();
+      if (warming) (await import("./commands/voiceover.ts")).startInBackground(values.run);
       const voiceover = status === null ? null : voiceoverWarningNl(status, warming);
       process.stdout.write(`${JSON.stringify({ ...(values.brief ? briefPending(pending) : pending), ...(voiceover ? { voiceover } : {}) })}\n`);
       return;
@@ -1018,7 +1020,7 @@ async function main(): Promise<void> {
     case "voiceover": {
       // Outside a run: a virtual Mac with VoiceOver that stays up for as long as the person keeps it.
       const { voiceoverRead, voiceoverSetup, voiceoverStart, voiceoverStatusCommand, voiceoverStop } = await import("./commands/voiceover.ts");
-      if (target === "start") process.exitCode = await voiceoverStart();
+      if (target === "start") process.exitCode = await voiceoverStart({ run: values.run });
       else if (target === "read") process.exitCode = await voiceoverRead({ url: values.url, steps: values.steps, press: values.press, out: values.out });
       else if (target === "status") process.exitCode = await voiceoverStatusCommand();
       else if (target === "stop") process.exitCode = await voiceoverStop({ force: values.force, run: values.run });
