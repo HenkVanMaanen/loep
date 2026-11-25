@@ -796,7 +796,10 @@ async function writeTasks(runDir: string, options: TaskOptions, previous: Instru
   const absoluteRun = resolve(runDir);
   const cli = resolve(new URL("../cli.ts", import.meta.url).pathname);
   const templates = Object.fromEntries(["rondgang", "beoordeel", "verifieer", "afmaak"].map((name) => [name, readTemplate(name)])) as Record<"rondgang" | "beoordeel" | "verifieer" | "afmaak", string>;
-  const base = { run: absoluteRun, cli, siteModel: join(absoluteRun, "site.json"), login: `${agentLoginNl(run.login)}${agentMailboxNl(runDir, `node ${cli} mail`, absoluteRun)}` };
+  const scopeNl = run.sample?.method === "fixed-list"
+    ? "**Afbakening.** Onderzoek de pagina's van de vaste lijst in de legenda, met hun toestanden en de documenten die meetellen. Meld ontbrekend bewijs alleen voor deze afbakening.\n\n"
+    : "";
+  const base = { run: absoluteRun, cli, siteModel: join(absoluteRun, "site.json"), login: `${agentLoginNl(run.login)}${agentMailboxNl(runDir, `node ${cli} mail`, absoluteRun)}`, scopeNl };
   const readsNl = readsAllowedNl(run.reads ?? []);
   // The budget as it was set, not what is left of it: the task stays the same while agents send, and its hash with it.
   const grantBudgetNl = (grant: WriteGrant): string => `${grant.maxWrites ?? DEFAULT_MAX_WRITES} verzendingen voor de hele run${spacingNl(grant.spacingSeconds ?? DEFAULT_WRITE_SPACING_SECONDS)}, gedeeld door alle agents en de veegronde${reservedWrites(grant) > 0 ? `; ${reservedNl(reservedWrites(grant))}. De sessies van één criterium (beoordelaar, verifieerder, afmaker) tellen samen als één` : ""}`;

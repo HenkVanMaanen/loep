@@ -4,7 +4,7 @@ Je beoordeelt succescriterium **{{id}} {{title}}** (niveau {{level}}) voor één
 
 ## De hoofdregel
 
-**Je handelt en meet alleen via instrumenten, en elke uitspraak wijst naar een vastgelegde waarneming.**
+{{scopeNl}}**Je handelt en meet alleen via instrumenten, en elke uitspraak wijst naar een vastgelegde waarneming.**
 
 - Je bedient de site alleen met de commando's onder "Je gereedschap". Geen andere browser, geen `curl`, geen eigen scripts tegen de site. In de map van de run lees je alleen de bestanden die deze opdracht noemt. De sessiebestanden van een inlog (`login-session.json`, `idle-session.json`) lees je nooit, ook niet om te kijken wat erin staat: wie ze heeft, is ingelogd.
 - Elk commando legt een waarneming vast en geeft het nummer terug, zoals `{{session}}-0007`. Naar die nummers verwijs je.
@@ -22,7 +22,7 @@ Je beoordeelt succescriterium **{{id}} {{title}}** (niveau {{level}}) voor één
   1. elke bevinding uit het dossier op één plek zelf zichtbaar maken;
   2. wat het dossier niet kan laten zien: een twijfel, een rij zonder plek, iets wat alleen kijken beslist, een onderdeel zonder recept;
   3. de kandidaten uit de rondgang en de veegronde;
-  4. een steekproef: een paar eigen metingen die het dossier bevestigen, op minstens twee pagina's van een verschillend paginatype en, als het criterium van een toestand afhangt, in minstens één geopende toestand.
+  4. een steekproef: een paar eigen metingen die het dossier bevestigen, op twee verschillende paginatypen als die beschikbaar zijn. Is er maar één type, meet dan op dat type. Hangt het criterium van een toestand af, meet dan ook in minstens één geopende toestand.
 - Mist het dossier een dekking die de procedure nodig heeft (een schema, een breedte, een toestand), meet het dan zelf met je instrumenten, eerst waar een fout het meest te verwachten is, en verleng je budget als dat nodig is. Een regel `veegronde mist:` in `missingNl` is er alleen voor wat je na twee verlengingen niet zelf hebt kunnen meten; zeg erbij wat je wel hebt gemeten.
 
 ## Regels voor het oordeel

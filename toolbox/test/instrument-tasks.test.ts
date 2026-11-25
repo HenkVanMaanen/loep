@@ -69,6 +69,25 @@ write(join("recipes", "process-contact.json"), { start: { url: HOME }, steps: [{
 const finding = (key: string, evidence: string[]): Verdict["findings"][number] => ({ key, titleNl: "Kop te licht op de foto", observedNl: "Wit op lichtgroen, 1,2 op 1.", impactNl: "Slechtzienden lezen de kop niet.", fixNl: "Leg een donkere laag onder de tekst.", severity: "hoog", owner: "design", component: null, locations: [{ page: "P1", where: "#kop > h1", wholePage: true }], pagesAffected: "gemeten op P1", evidence });
 const seen = (evidence: string[]): Verdict["observations"][number] => ({ checkedNl: "Tekst op de startpagina", howNl: "Contrast gemeten op de kop", observedNl: "1,2 op 1 bij een eis van 3", evidence, ruling: "noIssue" });
 
+test("a fixed one-page inventory limits the task's coverage and asks for the available page type", async () => {
+  const fixedDir = mkdtempSync(join(tmpdir(), "loep-tasks-fixed-"));
+  try {
+    const sample = { ...run.sample, method: "fixed-list" as const, items: [run.pages[0]!.item] };
+    const fixedRun: RunData = {
+      ...run, dir: fixedDir, sample, pages: [run.pages[0]!],
+      siteModel: { ...run.siteModel!, pageTypes: [run.siteModel!.pageTypes[0]!], processes: [] },
+    };
+    writeFileSync(join(fixedDir, "sample.json"), JSON.stringify(sample));
+    await instrumentTasks(fixedDir, { ...options, run: fixedRun, only: ["1.4.3"] });
+    const prompt = readFileSync(join(fixedDir, "tasks", "1.4.3", "beoordeel.md"), "utf8");
+    assert.match(prompt, /vaste lijst in de legenda/);
+    assert.match(prompt, /Meld ontbrekend bewijs alleen voor deze afbakening/);
+    assert.match(prompt, /Is er maar één type, meet dan op dat type/);
+  } finally {
+    rmSync(fixedDir, { recursive: true, force: true });
+  }
+});
+
 test("a run with a site model starts with a walk per page type and a judge task per criterion", async () => {
   assert.deepEqual(await instrumentTasks(dir, options), { walks: 2, judges: 2, verifiers: 0, finishers: 0 });
   const index = await loadInstrumentIndex(dir);

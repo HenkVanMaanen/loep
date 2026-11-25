@@ -143,6 +143,12 @@ De procedures staan in [procedures/](../procedures/README.md), één per succesc
 
 ## Wat de veegronde meet
 
+Bij het laden wacht loep op lettertypen en de registratie van eigen elementen. Als Next.js zijn routeaankondiging al in een shadow root heeft gezet, wacht loep niet op registratie van de drager van die aankondiging. Voor andere eigen elementen in die shadow root geldt de gewone wachttijd.
+
+Bij de aanwijzingsproef en de indrukproef delen de instrumenten een geopende toestand als er bij de aanwijzingsproef geen bediening is aangewezen. Na een aanwijzing begint de indrukproef met een verse replay.
+
+Bij een vaste lijst noemen de opdrachten de afbakening. De opgegeven pagina's en de toestanden en documenten die daarbij horen bepalen welk bewijs nodig is.
+
 | Bewijs | Hoe verzameld |
 |---|---|
 | Regels van axe-core en Alfa | Beide engines, elke pagina, licht en donker. Alle uitkomsten worden bewaard, ook "geslaagd" en "niet van toepassing". |

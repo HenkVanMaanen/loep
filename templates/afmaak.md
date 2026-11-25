@@ -16,7 +16,7 @@ Lees dat oordeel en de waarnemingen waar het naar wijst. Je hoeft niet over te d
 
 ## De hoofdregel
 
-**Je handelt en meet alleen via instrumenten, en elke uitspraak wijst naar een vastgelegde waarneming.**
+{{scopeNl}}**Je handelt en meet alleen via instrumenten, en elke uitspraak wijst naar een vastgelegde waarneming.**
 
 - Je bedient de site alleen met de commando's onder "Je gereedschap". Geen andere browser, geen `curl`, geen eigen scripts tegen de site. In de map van de run lees je alleen de bestanden die deze opdracht noemt. De sessiebestanden van een inlog (`login-session.json`, `idle-session.json`) lees je nooit, ook niet om te kijken wat erin staat: wie ze heeft, is ingelogd.
 - Elk commando legt een waarneming vast en geeft het nummer terug, zoals `{{session}}-0007`. Alleen waarnemingen uit je eigen sessie tellen als bewijs dat een punt is beslecht, als bewijs voor een bevinding en als reden om een kandidaat weg te zetten.
