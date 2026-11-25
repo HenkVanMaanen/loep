@@ -1,0 +1,1 @@
+Loep laadt pagina's met een gemonteerde Next.js-routeaankondiging sneller en hergebruikt een geopende toestand voor indrukken als de aanwijzingsproef alleen heeft gelezen. Voor live-ondertiteling vermeldt het dossier welke gemeten bronnen een mediabestand met een eindige speelduur zijn

@@ -1408,7 +1408,7 @@ export const bypass: Extractor = (run) => ({
   }),
 });
 
-export const motion: Extractor = (run) => ({
+export const motion: Extractor = (run, criterion) => ({
   pagesExamined: run.pages.length,
   method: "Elke pagina is geladen met bewegingsvoorkeur 'geen voorkeur', 1,5 seconde gewacht, daarna zijn lopende animaties, bewegende afbeeldingen, automatisch afspelende media en timers geteld.",
   pagesWithMotion: run.pages.filter((page) => page.motion.runningAnimations + page.motion.gifImages + page.motion.autoplayMedia + page.motion.marqueeBlink > 0).map((page) => ({ page: page.label, ...page.motion, longOrInfinite: page.motion.longOrInfinite.map((animation) => ({ name: animation.name, iterations: animation.iterations, durationMs: animation.durationMs, where: animation.target ? where(animation.target) : null })) })),
@@ -1418,15 +1418,27 @@ export const motion: Extractor = (run) => ({
     autoplayMedia: run.pages.reduce((sum, page) => sum + page.motion.autoplayMedia, 0),
     marqueeBlink: run.pages.reduce((sum, page) => sum + page.motion.marqueeBlink, 0),
   },
-  media: mediaTable(run),
+  media: mediaTable(run, criterion === "1.2.4"),
 });
 
+/** Classify the measured source. A playlist can also carry a recording, and a file suffix alone is weak evidence. */
+function liveMediaSource({ src, durationSeconds, error }: MediaElement): "recorded-file" | "possible-stream" | "unknown" {
+  const url = src && URL.parse(src, "https://source.invalid/");
+  if (!url) return "unknown";
+  if (url.protocol === "blob:" || /\.(?:m3u8|mpd)$/i.test(url.pathname)) return "possible-stream";
+  if (url.protocol !== "https:" && url.protocol !== "http:") return "unknown";
+  return !error && durationSeconds !== null && Number.isFinite(durationSeconds) && durationSeconds > 0 && /\.(?:mp4|webm|mp3|m4a|ogg)$/i.test(url.pathname)
+    ? "recorded-file"
+    : "unknown";
+}
+
 /** One audio or video element as a judge needs it: what the code says, what the file is, whether it played, and what stops it. */
-function mediaRow(element: MediaElement): Record<string, unknown> {
+function mediaRow(element: MediaElement, classifySource: boolean): Record<string, unknown> {
   return {
     element: `${element.tag}${element.frame ? ` in venster ${element.frame}` : ""}`,
     where: where(element),
     src: element.src,
+    ...(classifySource ? { sourceKind: liveMediaSource(element) } : {}),
     visible: element.visible,
     autoplay: element.attributes.autoplay,
     loop: element.loop,
@@ -1447,7 +1459,7 @@ function mediaRow(element: MediaElement): Record<string, unknown> {
   };
 }
 
-function mediaTable(run: RunData): Record<string, unknown> {
+function mediaTable(run: RunData, classifySource: boolean): Record<string, unknown> {
   const of = (page: PageData): MediaReport | undefined => page.media ?? page.facts.media;
   if (!run.pages.some((page) => of(page) !== undefined)) return { examined: false, note: "In deze run zijn audio en video niet per element gemeten." };
   const states = Object.entries(run.stateEvidence ?? {}).filter(([, evidence]) => (evidence.media?.elements.length ?? 0) > 0);
@@ -1455,8 +1467,8 @@ function mediaTable(run: RunData): Record<string, unknown> {
     examined: true,
     method: "Elk audio- en video-element op elke pagina, ook in ingesloten vensters: gelezen na het laden en nog eens na drie seconden. Vastgelegd: wat de code zegt (autoplay, loop, controls, muted), wat het bestand is (duur, geluidsspoor, ondertitel- en andere tekstsporen) en of het in de testbrowser speelde. Knoppen op de pagina die het geluid kunnen stoppen (op naam, via aria-controls, of in hetzelfde blok) zijn op een aparte pagina aangeklikt; effect zegt wat dat met het element deed. Een browser kan vanzelf afspelen tegenhouden: een oordeel over vanzelf starten steunt op de code en het bestand, niet alleen op playingAfterLoad. Of een geluidsspoor stil is, is niet gemeten.",
     elementsFound: run.pages.reduce((sum, page) => sum + (of(page)?.elements.length ?? 0), 0),
-    perPage: run.pages.filter((page) => (of(page)?.elements.length ?? 0) > 0).map((page) => ({ page: page.label, controlsTried: page.media !== undefined, elements: of(page)!.elements.map(mediaRow) })),
-    perState: states.map(([state, evidence]) => ({ state, controlsTried: false, elements: evidence.media!.elements.map(mediaRow) })),
+    perPage: run.pages.filter((page) => (of(page)?.elements.length ?? 0) > 0).map((page) => ({ page: page.label, controlsTried: page.media !== undefined, elements: of(page)!.elements.map((element) => mediaRow(element, classifySource)) })),
+    perState: states.map(([state, evidence]) => ({ state, controlsTried: false, elements: evidence.media!.elements.map((element) => mediaRow(element, classifySource)) })),
     framesNotInspected: run.pages.flatMap((page) => (of(page)?.framesNotInspected ?? []).map((frame) => ({ page: page.label, ...frame }))),
   };
 }

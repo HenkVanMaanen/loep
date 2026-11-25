@@ -933,7 +933,10 @@ export async function settlePage(page: Page): Promise<SettleNote | null> {
       const names = new Set<string>();
       const visit = (root: Document | ShadowRoot): void => {
         for (const element of root.querySelectorAll("*")) {
-          if (element.localName.includes("-")) names.add(element.localName);
+          // Next.js mounts the announcement in a plain shadow host. Once that portal
+          // exists there is no custom element registration to wait for.
+          const routeAnnouncer = element.localName === "next-route-announcer" && element.shadowRoot?.getElementById("__next-route-announcer__");
+          if (element.localName.includes("-") && !routeAnnouncer) names.add(element.localName);
           if (element.shadowRoot) visit(element.shadowRoot);
         }
       };

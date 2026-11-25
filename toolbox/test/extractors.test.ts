@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ariaLabelReplacesText, contrast, controls, frameNotLoaded, headingsAsBypass, HIDDEN_INPUT, keyboard, knownPlayer, labelInName, links, pointer, scrollContainer, singleKeys, textSpacing } from "../src/lib/extractors.ts";
+import { ariaLabelReplacesText, contrast, controls, frameNotLoaded, headingsAsBypass, HIDDEN_INPUT, keyboard, knownPlayer, labelInName, links, motion, pointer, scrollContainer, singleKeys, textSpacing } from "../src/lib/extractors.ts";
 import type { PageData, RunData } from "../src/lib/rundata.ts";
 
 const box = { x: 0, y: 0, width: 100, height: 20 };
@@ -22,6 +22,27 @@ function page(label: string, url: string, facts: Record<string, unknown>, extra:
   } as unknown as PageData;
 }
 const runOf = (...pages: PageData[]): RunData => ({ pages, states: null, contrast: null, dir: "", inventory: { totals: {} }, sample: { items: [] } }) as unknown as RunData;
+
+test("the live-captions dossier classifies measured files without treating ambiguous sources as recordings", () => {
+  const media = (src: string, durationSeconds: number | null, error: string | null = null) => ({
+    tag: "video", path: ["video"], text: "", src, durationSeconds, error, attributes: {}, pageControls: [],
+  });
+  const elements = [
+    media("https://example.nl/Film.MP4?download=1", 460),
+    media("https://example.nl/live.m3u8", 30),
+    media("blob:https://example.nl/123", 30),
+    media("https://example.nl/film.mp4", null),
+    media("https://example.nl/film.mp4", 30, "load failed"),
+    media("https://example.nl/player?source=film.mp4", 30),
+  ];
+  const run = runOf(page("P1", "https://example.nl/", {}, {
+    media: { elements, framesNotInspected: [] },
+    motion: { runningAnimations: 0, gifImages: 0, autoplayMedia: 0, marqueeBlink: 0 },
+  }));
+  const reported = (criterion: string) => (motion(run, criterion) as { media: { perPage: { elements: { sourceKind?: string }[] }[] } }).media.perPage[0]!.elements;
+  assert.deepEqual(reported("1.2.4").map((row) => row.sourceKind), ["recorded-file", "possible-stream", "possible-stream", "unknown", "unknown", "unknown"]);
+  assert.ok(reported("1.2.2").every((row) => !("sourceKind" in row)));
+});
 
 test("an aria-label that says something else than the visible text is recognised", () => {
   assert.equal(ariaLabelReplacesText("Aan de slag", "Aan de slag", "Minder kopen"), true);

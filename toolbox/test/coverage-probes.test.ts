@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import type { Browser, Page } from "playwright";
 import { call } from "../src/browser/call.ts";
-import { INPAGE_PATH, launchBrowser, loadPage, newContext } from "../src/browser/session.ts";
-import { DownRun, HoverRun, inState } from "../src/commands/states.ts";
+import { INPAGE_PATH, launchBrowser, loadPage, newContext, settlePage } from "../src/browser/session.ts";
+import { DownRun, HoverRun, inState, pointerInState } from "../src/commands/states.ts";
 import type { StateOpener } from "../src/commands/modelsweep.ts";
 import { controlsOnlyWithSpacing, overflowProbe, textSpacing, visibleControlKeys, type ContentInventory } from "../src/instruments/overflow.ts";
 import { downEventTargets, downKind } from "../src/instruments/pointer.ts";
@@ -43,6 +43,34 @@ async function open(path: string, viewport?: { width: number; height: number }):
   await loadPage(page, `${site.origin}${path}`);
   return page;
 }
+
+test("page settling leaves the mounted Next.js announcer in place and waits for genuine custom elements", async () => {
+  const context = await newContext(browser);
+  try {
+    const page = await context.newPage();
+    await page.setContent("<next-route-announcer></next-route-announcer>");
+    await page.evaluate(() => {
+      const announcer = document.querySelector("next-route-announcer")!.attachShadow({ mode: "open" });
+      announcer.innerHTML = '<div id="__next-route-announcer__" role="alert">Nieuwe pagina</div><late-widget></late-widget>';
+      const whenDefined = customElements.whenDefined.bind(customElements);
+      customElements.whenDefined = (name) => {
+        document.body.setAttribute(`data-waited-${name}`, "yes");
+        if (name === "late-widget" && !customElements.get(name)) setTimeout(() => customElements.define(name, class extends HTMLElement {}), 20);
+        // The portal normally never registers. Resolve in this branch so the regression fails quickly.
+        return name === "next-route-announcer" ? Promise.resolve(HTMLElement) : whenDefined(name);
+      };
+    });
+    await settlePage(page);
+    assert.equal(await page.locator("body").getAttribute("data-waited-next-route-announcer"), null);
+    assert.equal(await page.evaluate(() => Boolean(customElements.get("late-widget"))), true);
+    assert.equal(await page.getByRole("alert").textContent(), "Nieuwe pagina");
+    await page.evaluate(() => document.querySelector("next-route-announcer")!.shadowRoot!.getElementById("__next-route-announcer__")!.remove());
+    await settlePage(page);
+    assert.equal(await page.locator("body").getAttribute("data-waited-next-route-announcer"), "yes");
+  } finally {
+    await context.close();
+  }
+});
 
 /** A state of a site model without the model: the page with its panel opened, and the condition that says it is open. */
 function panelState(counter: { opened: number }): StateOpener & { open: NonNullable<StateOpener["open"]> } {
@@ -170,6 +198,21 @@ test("in an opened state the probes take what is new there, and open the state a
   assert.deepEqual([pressed.found!.kindsFound, pressed.found!.pressed], [1, 1]);
   assert.equal(pressing.results[0]!.state, "component-paneel");
   assert.match(pressing.results[0]!.changeOnDown!, /Gekozen\./);
+});
+
+test("a press can use the hover replay only when the hover probe did not point at anything", async () => {
+  for (const hoverLimit of [0, 1]) {
+    const counter = { opened: 0 };
+    const hovering = new HoverRun(out, hoverLimit);
+    const pressing = new DownRun();
+    const result = await pointerInState(panelState(counter), hovering, pressing, {});
+    assert.equal(result.hover.examined, true);
+    assert.equal(result.hover.pointedAt, hoverLimit);
+    assert.equal(result.down.examined, true);
+    assert.equal(result.down.pressed, 1);
+    assert.match(pressing.results[0]!.changeOnDown!, /Gekozen\./);
+    assert.equal(counter.opened, 1 + hoverLimit);
+  }
 });
 
 test("the press probe tries the elements that listen, not every element of a tag that listens, and keeps a page while a press changed nothing", async () => {

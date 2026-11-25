@@ -718,13 +718,23 @@ async function documentListens(page: Page, ownOfBrowser: Record<string, Record<s
 /** The pointer probes in one state of the model: what is in the state and was not on a page is pointed at and pressed. */
 export async function pointerInState(opener: OpenableState, hovering: HoverRun, pressing: DownRun, ownOfBrowser: Record<string, Record<string, number>>): Promise<{ hover: HoverInState; down: DownInState }> {
   const id = opener.base.id;
-  const pointed = await inState(opener, (source, narrow) => hovering.on({ label: id, narrow, state: id, shot: `state-${id}` }, source));
-  const pressed = await inState(opener, async (source, narrow) => {
+  const place = (narrow: boolean): Place => ({ label: id, narrow, state: id, shot: `state-${id}` });
+  const press = async (source: PageSource, narrow: boolean): ReturnType<DownRun["on"]> => {
     const page = await source();
-    return pressing.on({ label: id, narrow, state: id, shot: `state-${id}` }, source, new Set(), page ? await documentListens(page, ownOfBrowser) : false);
+    return pressing.on(place(narrow), source, new Set(), page ? await documentListens(page, ownOfBrowser) : false);
+  };
+  const measured = await inState(opener, async (source, narrow) => {
+    const hover = await hovering.on(place(narrow), source);
+    // Finding hover targets only reads the page. If nothing was hovered, the press
+    // probe can start from the same replay. A hover action always needs a clean replay.
+    const down = hover.complete && hover.pointedAt === 0 ? await press(source, narrow) : null;
+    return { hover, down, complete: hover.complete && (down?.complete ?? true) };
   });
+  const hover = measured.found?.hover;
+  const down = measured.found?.down;
+  const pressed = down ? { ...measured, examined: down.complete, found: down } : await inState(opener, press);
   return {
-    hover: { state: id, viewport: pointed.viewport, examined: pointed.examined, reasonNl: pointed.reasonNl, controls: pointed.found?.controls ?? 0, kinds: pointed.found?.kinds ?? 0, pointedAt: pointed.found?.pointedAt ?? 0 },
+    hover: { state: id, viewport: measured.viewport, examined: hover?.complete ?? false, reasonNl: hover?.complete ? null : measured.reasonNl, controls: hover?.controls ?? 0, kinds: hover?.kinds ?? 0, pointedAt: hover?.pointedAt ?? 0 },
     down: { state: id, viewport: pressed.viewport, examined: pressed.examined, reasonNl: pressed.reasonNl, kindsFound: pressed.found?.kindsFound ?? 0, pressed: pressed.found?.pressed ?? 0 },
   };
 }
