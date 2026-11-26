@@ -82,6 +82,7 @@ const USAGE = `loep <command> [options]
   check-verdict --run <run> --criterion <id> --round judge|final|finish
                                          Validate the verdict of the judge, the final verdict of the verifier, or the verdict
                                          of the finishing round; non-zero exit on problems
+  fast-alt --run <run>                   Try a confirmed failure of 1.1.1 on a prepared one-page run with only that criterion
   pending --run <run> [--brief]          The phase the run is in and the tasks that are still open, as JSON, each with
                                          its attempts. --brief gives only the ids and attempts, for the workflow
   estimate --run <run> [--at-once <n>] [--groups] [--json]
@@ -674,6 +675,12 @@ async function main(): Promise<void> {
       if (!values.run) throw new Error("unskip needs --run <run>");
       const { unskip } = await import("./commands/instrument-tasks.ts");
       process.stdout.write(`${await unskip(values.run, { pageType: values["page-type"], criterion: values.criterion, round: values.round })} verwijderd: de opdracht staat weer open\n`);
+      return;
+    }
+    case "fast-alt": {
+      if (!values.run) throw new Error("fast-alt verwacht --run <map>");
+      const { fastAlt } = await import("./commands/fast-alt.ts");
+      process.stdout.write(`${await fastAlt(values.run)}\n`);
       return;
     }
     case "check-verdict": {

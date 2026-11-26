@@ -141,6 +141,10 @@ Negen ronden op bestaande evaluaties: één onderzoek van een echte site drie ke
 | Een vast geval dat één groep noemt, wordt gelezen als "alleen die groep". Onder 4.1.2 noemden alle zestien bevindingen alleen wie niet ziet. | De opdracht zegt dat na een vast geval de andere groepen van het criterium nog aan bod komen. Daarna noemden vijf van de zestien meer dan één groep. | hersteld |
 | Dat twee beoordelingen door een taalmodel op dezelfde volgorde uitkomen, is geen ijking: beide kunnen dezelfde blinde vlek hebben. De wegingen kwamen grotendeels overeen met een eerdere indeling door een model, en dat zegt niets over of ze kloppen. | Het staat bij de beperkingen in de methode en in het verslag van de meting. | open: de vaste gevallen en de beschrijving van de groepen zijn door niemand van buiten nagelopen |
 
+## Verkorte meting voor 1.1.1 (26 november 2026)
+
+Op de startpagina van de testsite kwamen in drie metingen beide geplante gebreken en twee pictogramlinks zonder naam terug. De tweede sessie bevestigde elke bevinding. Met het bewijs van de veegronde al klaar, duurde de meting van `tasks` tot en met `evaluate` ongeveer 14 seconden. De eerdere meting met een beoordelaar en verifieerder duurde 4 minuten en 40 seconden en bevestigde één gebrek. Op de herstelde versie van de pagina bleef de opdracht open toen het bewaarde bewijs niet opnieuw kon worden vastgesteld. De meting gaat over duidelijke gebreken op deze ene pagina.
+
 ## Over het werken zelf
 
 - **Meten voor bouwen.** Tests zeggen dat de code doet wat bedoeld was, niet dat het onderzoek beter wordt. Na elke reeks wijzigingen eerst een kleine meting op de criteria die geraakt zijn, pas daarna verder bouwen.
