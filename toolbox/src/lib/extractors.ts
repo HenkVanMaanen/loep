@@ -8,6 +8,7 @@ import { documents } from "./document-evidence.ts";
 import { judgeTimer, TIMER_RULE_NL, timerNl, watchNl, type TimeLimitProbe } from "./timelimits.ts";
 import { canonicalJson } from "./canonical.ts";
 import { whyCandidateNl } from "./statusmessages.ts";
+import { colourLinks } from "./colour-links.ts";
 
 /**
  * Extractors turn the raw evidence of a run into compact, deduplicated tables for
@@ -2210,6 +2211,7 @@ export const EXTRACTORS: Record<string, Extractor> = {
   landmarks,
   images,
   links,
+  colourLinks,
   controls,
   keyboard,
   reflow,
