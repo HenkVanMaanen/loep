@@ -664,8 +664,12 @@ export class ModelSweep {
     // Every picture in the state, cut out and read with text recognition (1.1.1, 1.4.5): a picture a page had is not read again.
     await extra("pictures", "pictures.json", async () => ({ ...(await picturesWithText(page, join(absolute, "pictures"), join(dir, "pictures"), this.pictureCache)) }));
     await extra("reflow", "reflow.json", async () => {
-      const measured = await overflowAtSize(page, { width: 320, height: 256 }, file("reflowScreenshot", "reflow.png"));
-      return { viewport: { width: 320, height: 256 }, ...measured.report, visibleControls: measured.visibleControls };
+      const viewport = { width: 320, height: 256 };
+      let stateReachedAt320: boolean | null = null;
+      const measured = await overflowAtSize(page, viewport, file("reflowScreenshot", "reflow.png"), async () => {
+        stateReachedAt320 = await stillThere();
+      });
+      return { viewport, ...measured.report, visibleControls: measured.visibleControls, stateReachedAt320 };
     });
     await extra("zoom200", "zoom200.json", async () => {
       const half = { width: Math.round(size.width / 2), height: Math.round(size.height / 2) };

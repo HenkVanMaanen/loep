@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ariaLabelReplacesText, contrast, controls, frameNotLoaded, headingsAsBypass, HIDDEN_INPUT, keyboard, knownPlayer, labelInName, links, pointer, scrollContainer, singleKeys, textSpacing } from "../src/lib/extractors.ts";
+import { ariaLabelReplacesText, contrast, controls, frameNotLoaded, headingsAsBypass, HIDDEN_INPUT, keyboard, knownPlayer, labelInName, links, pointer, reflow, scrollContainer, singleKeys, textSpacing } from "../src/lib/extractors.ts";
 import type { PageData, RunData } from "../src/lib/rundata.ts";
 
 const box = { x: 0, y: 0, width: 100, height: 20 };
@@ -140,6 +140,38 @@ test("no visible focus change is only reported for an element that was painted i
 
 const capturedState = (id: string, extra: Record<string, unknown> = {}) => ({ id, kind: "component", modelId: id, pageTypes: ["start"], url: "https://site.nl/", viewport: { width: 1280, height: 800 }, reached: true, reasonNl: null, stillReachedAfterMeasuring: true, dir: `site-states/${id}`, files: { textSpacingScreenshot: `site-states/${id}/textspacing.png` }, engineSummary: null, contrast: { measured: 1, failed: 0, cantTell: 0 }, largestOverlayShare: 0, ...extra });
 const withStates = (run: RunData, states: unknown[], stateEvidence: Record<string, unknown>): RunData => ({ ...run, siteModel: { blockers: [], pageTypes: [], components: [], processes: [], frames: [], notesNl: [] }, siteStates: { siteSha256: "", seeded: { blockers: [], cookies: 0, storedValues: 0 }, dismissals: [], states }, stateEvidence }) as unknown as RunData;
+
+test("reflow locates clipping in the opened state even when the page itself does not scroll", () => {
+  const url = "https://site.nl/";
+  const container = { tag: "div", path: ["#actions"], overflowX: "hidden", scrollWidth: 472, clientWidth: 272 };
+  const button = element("button", "#decline", { text: "Weigeren", right: 496, overflowContainer: container });
+  const textCut = { lost: true, linesCut: 1, linesHidden: 1, pixels: 158 };
+  const clipped = element("div", "#actions", { text: "Toestaan Weigeren", textOverflow: "clip", textCut });
+  const states = [
+    capturedState("blocker-banner", { kind: "blocker", openWith: `${url} --with-blockers`, files: { screenshot: "wide.png", reflowScreenshot: "narrow.png" } }),
+    capturedState("component-menu", { recipe: "menu" }),
+    capturedState("component-oud", { recipe: "oud-menu" }),
+    capturedState("component-hulp", { reached: false, viewport: null, reasonNl: "het paneel ging niet open" }),
+  ];
+  const run = withStates(runOf(page("P1", url, {}, { targets: [] })), states, {
+    "blocker-banner": { reflow: { ...probe, offenders: [button], clipped: [clipped] } },
+    "component-menu": { reflow: { ...probe, stateReachedAt320: false } },
+    "component-oud": {},
+  });
+  const dossier = reflow(run, "1.4.10") as { pagesWithHorizontalScroll: unknown[]; states: Record<string, unknown>[] };
+  assert.deepEqual(dossier.pagesWithHorizontalScroll, []);
+  const [banner, menu, old, notOpened] = dossier.states;
+  assert.deepEqual(banner, {
+    state: "blocker-banner", kind: "blocker", page: "P1", openWith: "P1 --with-blockers", openedAt: { width: 1280, height: 800 },
+    reached: true, widerScreenshot: "wide.png", measuredAt320: true, stateReachedAt320: null, viewportWidth: 320, scrollWidth: 320, horizontalScroll: false,
+    elementsWiderThanViewport: [{ tag: "button", text: "Weigeren", where: "#decline", right: 496, ...scrollContainer(container) }],
+    clippedText: [{ tag: "div", text: "Toestaan Weigeren", textOverflow: "clip", where: "#actions", textCut }], screenshot: "narrow.png",
+  });
+  assert.equal(menu!.stateReachedAt320, false, "a resized menu that closed does not count as covering the open state");
+  assert.equal(old!.measuredAt320, false, "an older state without a measurement does not look clean");
+  assert.equal(notOpened!.measuredAt320, false);
+  assert.equal(notOpened!.reasonNl, "het paneel ging niet open");
+});
 
 test("visible text and name are set side by side for every link and control, per window and per state", () => {
   const named = (tag: string, path: string, text: string, name: string, extra: Record<string, unknown> = {}) => element(tag, path, { text, ax: { role: tag === "a" ? "link" : "button", name, ignored: false, properties: {} }, ...extra });

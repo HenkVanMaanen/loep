@@ -46,6 +46,8 @@ export interface StateEvidence {
   contrastDark?: Pick<PageContrast, "measurements" | "controls" | "graphics">;
   /** Size of every control in this state. Absent in older runs. */
   targets?: PageData["targets"];
+  /** Geometry after resizing the opened state to 320 CSS pixels. */
+  reflow?: OverflowProbe & { stateReachedAt320?: boolean | null };
   /** The wider text spacing, in force before the state was opened. Absent in older runs, where it was applied afterwards. */
   textSpacing?: Partial<PageData["textspacing"]> & { appliedBeforeOpening?: boolean; reachedWithSpacing?: boolean; reasonNl?: string | null; stateStillReachedAfterwards?: boolean | null };
   /** Links and controls as they were in this state, for the comparison of visible text and name. */
@@ -226,11 +228,12 @@ export interface OverflowProbe {
   viewportWidth: number;
   /** `overflowContainer` is the nearest ancestor that clips or scrolls sideways; null when none does, absent in older runs. */
   offenders: (Element & { right: number; overflowContainer?: { tag: string; path: string[]; overflowX: string; scrollWidth: number; clientWidth: number } | null })[];
-  clipped: (Element & { textOverflow: string })[];
+  clipped: (Element & { textOverflow: string; textCut?: { lost: boolean; linesCut: number; linesHidden: number; pixels: number } })[];
   visibleControls: string[];
   /** Clickable elements that are not a control, as visible at this window size. Absent in older runs. */
   clickables?: Clickable[];
   viewport?: { width: number; height: number };
+  screenshotClippedAt?: ScreenshotClip;
   /** Headings, images and blocks of text as visible at this size. Absent in older runs. */
   content?: ContentInventory;
 }
@@ -582,6 +585,7 @@ export async function loadRun(dir: string): Promise<RunData> {
         ...(facts ? { links: facts.links, controls: facts.controls, timers: facts.timers, images: facts.images, backgroundImages: facts.backgroundImages } : {}),
         ...(await optional("contrastDark", "contrastDark")),
         ...(await optional("targets", "targets")),
+        ...(await optional("reflow", "reflow")),
         ...(await optional("textSpacing", "textSpacing")),
         ...(await optional("order", "order")),
         ...(await optional("pictures", "pictures")),
