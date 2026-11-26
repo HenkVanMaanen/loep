@@ -51,6 +51,7 @@ export interface StateEvidence {
   /** Links and controls as they were in this state, for the comparison of visible text and name. */
   links?: Facts["links"];
   controls?: Facts["controls"];
+  fieldGroups?: Facts["fieldGroups"];
   /** Timers counted from the load of the page until the state was open and measured: what a step of the recipe started is among them. Absent in older runs. */
   timers?: Facts["timers"];
   /** Every timer with what it did, the meta refreshes, cookies and stored values in this state (2.2.1). Absent in older runs. */
@@ -168,6 +169,10 @@ export interface Facts {
     placeholder: string | null;
     disabled: boolean;
     labelText: string | null;
+    /** The elements of the native labels relation. Absent in older runs. */
+    labelLinks?: { path: string[]; text: string; visible: boolean | null }[];
+    /** Composed DOM ancestors that may provide a group. Absent in older runs. */
+    groupPaths?: string[][];
     inForm: boolean;
     tabindex: string | null;
     /** How an input is kept from rendering ("display: none", "visibility: hidden"); null when it is rendered. Absent in older runs. */
@@ -177,6 +182,8 @@ export interface Facts {
     /** The colour the label is painted on, for the contrast of the drawn box. */
     labelBackground?: [number, number, number, number];
   })[];
+  /** Group candidates of controls, with their own browser role and name. Absent in older runs. */
+  fieldGroups?: (Element & { legend: string | null })[];
   /** Absent in runs collected before these were recorded. */
   clickables?: Clickable[];
   structure?: StructureCandidates;
@@ -579,7 +586,7 @@ export async function loadRun(dir: string): Promise<RunData> {
         engines: await readJson(join(dir, state.files.engines)),
         contrast: await readJson(join(dir, state.files.contrast)),
         ...(facts?.media ? { media: facts.media } : {}),
-        ...(facts ? { links: facts.links, controls: facts.controls, timers: facts.timers, images: facts.images, backgroundImages: facts.backgroundImages } : {}),
+        ...(facts ? { links: facts.links, controls: facts.controls, fieldGroups: facts.fieldGroups, timers: facts.timers, images: facts.images, backgroundImages: facts.backgroundImages } : {}),
         ...(await optional("contrastDark", "contrastDark")),
         ...(await optional("targets", "targets")),
         ...(await optional("textSpacing", "textSpacing")),

@@ -426,7 +426,37 @@ function statesLanguage(run: RunData): Record<string, unknown> {
   };
 }
 
-export const headings: Extractor = (run) => {
+type HeadingWithoutContent = NonNullable<Facts["structure"]>["headingsWithoutContent"][number];
+
+function headingWithoutContentRow(item: HeadingWithoutContent) {
+  return { heading: `h${item.level} ${item.text.slice(0, 70)}`, nextHeading: item.nextHeading, linksOrButtonsAfter: item.controlsAfter, textBeforeInSameBlock: item.before, region: item.region };
+}
+
+/** Links and images already measured with this heading as context. Names alone do not establish what a heading titles. */
+function headingsWithNearbyContent(page: PageData) {
+  const candidates = page.facts.structure!.headingsWithoutContent;
+  if (candidates.length === 0) return [];
+  const counts = new Map<string, number>();
+  for (const heading of page.facts.headings.filter((item) => item.visible)) {
+    const title = heading.text.slice(0, 80);
+    counts.set(title, (counts.get(title) ?? 0) + 1);
+  }
+  type NearbyElement = Facts["links"][number] | Facts["images"][number];
+  const content = new Map(candidates.filter((item) => counts.get(item.text) === 1).map((item) => [item.text, [] as NearbyElement[]]));
+  for (const element of [...page.facts.links, ...page.facts.images]) {
+    if (element.visible) content.get(element.context)?.push(element);
+  }
+  return candidates.map((item) => {
+    const found = content.get(item.text) ?? [];
+    const nearbyContent = found.length > 0 ? {
+      count: found.length,
+      examples: found.slice(0, 6).map((element) => ({ tag: element.tag, where: where(element), text: element.text.slice(0, 80) || null, role: element.ax?.role ?? null, accessibleName: axName(element) || null, hiddenFromAssistiveTech: element.ax?.ignored ?? null })),
+    } : null;
+    return { ...headingWithoutContentRow(item), where: where(item), nearbyContent };
+  });
+}
+
+export const headings: Extractor = (run, criterion) => {
   const pages = run.pages.map((page) => {
     const visible = page.facts.headings.filter((heading) => heading.visible && !heading.ax?.ignored);
     const levels = visible.map((heading) => heading.level ?? 0);
@@ -478,7 +508,9 @@ export const headings: Extractor = (run) => {
             },
             (section) => `${section.level}|${section.sectionHeading}|${section.titles.join("|")}`,
           ).map((entry) => ({ sectionHeading: `h${entry.example.level} ${entry.example.sectionHeading.slice(0, 70)}`, cardTitlesAtThatLevel: entry.example.titles.length, examples: entry.example.titles.slice(0, 4).map((title) => `h${entry.example.level} ${title.slice(0, 60)}`), pages: pagesText(entry.pages, total), firstCardWhere: where(entry.example) })),
-          headingsWithoutContent: candidates((page) => page.facts.structure!.headingsWithoutContent, (item) => ({ heading: shown(item), nextHeading: item.nextHeading, linksOrButtonsAfter: item.controlsAfter, textBeforeInSameBlock: item.before, region: item.region })),
+          headingsWithoutContent: criterion === "1.3.1"
+            ? group(run, headingsWithNearbyContent, canonicalJson).map((entry) => ({ ...entry.example, pages: pagesText(entry.pages, total) }))
+            : candidates((page) => page.facts.structure!.headingsWithoutContent, headingWithoutContentRow),
           boldLeads: candidates((page) => page.facts.structure!.boldLeads, (item) => ({ tag: item.tag, boldText: item.text, kind: item.kind === "whole-paragraph" ? "hele alinea is vet" : "vette tekst, dan een regeleinde, dan gewone tekst", followedBy: item.followedBy, region: item.region })),
           dashLines: candidates((page) => page.facts.structure!.dashLines, (item) => ({ tag: item.tag, firstLine: item.text, linesStartingWithDash: item.lineCount, lines: item.lines, region: item.region })),
         }
@@ -1297,13 +1329,75 @@ export const consistency: Extractor = (run) => {
   };
 };
 
-export const forms: Extractor = (run) => {
+type FormField = Facts["controls"][number];
+
+const FIELD_ROLES = new Set(["textbox", "searchbox", "combobox", "listbox", "spinbutton", "checkbox", "radio", "switch", "slider"]);
+const INPUT_BUTTONS = new Set(["button", "submit", "reset", "image", "hidden"]);
+
+function fieldForStructure(control: FormField): boolean {
+  if (control.tag === "input") return !INPUT_BUTTONS.has(control.type?.toLowerCase() ?? "text");
+  return ["select", "textarea"].includes(control.tag) ||
+    (control.inForm && control.ax?.properties.editable === "richtext") ||
+    FIELD_ROLES.has(control.ax?.role ?? "") ||
+    (control.roleAttr ?? "").toLowerCase().split(/\s+/).some((role) => FIELD_ROLES.has(role));
+}
+
+function fieldsWithRelationships(controls: Facts["controls"], groups: Facts["fieldGroups"]) {
+  const groupByPath = new Map((groups ?? []).map((group) => [where(group), group]));
+  return controls.filter(fieldForStructure).map((field) => ({
+    where: where(field),
+    tag: field.tag,
+    type: field.type,
+    role: field.ax?.role ?? null,
+    visible: field.visible,
+    hiddenFromAssistiveTech: field.ax?.ignored ?? null,
+    label: field.labelText || null,
+    accessibleName: axName(field) || null,
+    required: field.required,
+    browserRequired: field.ax?.properties.required ?? null,
+    labelLinks: field.labelLinks?.map((label) => ({ where: where(label), text: label.text, visible: label.visible })) ?? null,
+    groupCandidates: field.groupPaths?.map((path) => {
+      const group = groupByPath.get(where({ path }));
+      return { where: where({ path }), tag: group?.tag ?? null, legend: group?.legend ?? null, role: group?.ax?.role ?? null, accessibleName: group ? axName(group) || null : null, hiddenFromAssistiveTech: group?.ax?.ignored ?? null };
+    }) ?? null,
+  }));
+}
+
+/** Compare on the same page. A different field at a reused selector may not answer for the original. */
+function fieldStructure(run: RunData) {
+  const pages = run.pages.map((page) => ({ page: page.label, fields: fieldsWithRelationships(page.facts.controls, page.facts.fieldGroups) }));
+  const fieldsByPage = new Map(pages.map(({ page, fields }) => [page, fields]));
+  const identity = (field: ReturnType<typeof fieldsWithRelationships>[number]): string => JSON.stringify([field.where, field.tag, field.type, field.label]);
+  const seenVisible = new Map(pages.map(({ page, fields }) => [page, new Set(fields.filter((field) => field.visible).map(identity))]));
+  const pageByUrl = new Map(run.pages.map((page) => [page.item.url, page.label]));
+  const baseByPage = new Map(pages.map(({ page, fields }) => [page, new Map(fields.map((field) => [field.where, canonicalJson(field)]))]));
+  const states = (run.siteStates?.states ?? []).map((state) => {
+    const address = state.frame?.measuredInFrame ? state.frame.address : state.url;
+    const page = address ? pageByUrl.get(address) ?? null : null;
+    const evidence = run.stateEvidence?.[state.id];
+    const source = { state: state.id, page, screenshot: state.files.screenshotFullPage ?? state.files.screenshot ?? null, accessibilityTree: state.files.accessibilityTree ?? null };
+    if (!state.reached || state.stillReachedAfterMeasuring === false || state.notLoaded?.length || !evidence?.controls) return { ...source, examined: false };
+    const fields = fieldsWithRelationships(evidence.controls, evidence.fieldGroups).filter((field) => field.visible);
+    if (page) for (const field of fields) seenVisible.get(page)!.add(identity(field));
+    const base = page ? baseByPage.get(page) : undefined;
+    return { ...source, examined: true, visibleFields: fields.length, newOrChangedFields: fields.filter((field) => base?.get(field.where) !== canonicalJson(field)) };
+  });
+  return {
+    note: "Per pagina en toestand: de naam, rol en verplichte invoer zoals de browser die doorgeeft, gekoppelde HTML-labels en omringende groepskandidaten uit de code. `null` bij labelLinks of groupCandidates betekent dat de run dit niet vastlegde. De weergave die de bezoeker ziet lees je in het beeld. Een codegroep en de rol ervan bewijzen op zichzelf niet welke kinderen de boom in die groep toont.",
+    pages: group(run, (page) => [fieldsByPage.get(page.label)!], canonicalJson).map((entry) => ({ page: entry.pages[0], fields: entry.example, ...(entry.pages.length > 1 ? { alsoOn: entry.pages.slice(1) } : {}) })),
+    states,
+    notSeenVisible: pages.flatMap(({ page, fields }) => fields.filter((field) => !seenVisible.get(page)!.has(identity(field))).map((field) => ({ page, where: field.where, label: field.label }))),
+  };
+}
+
+export const forms: Extractor = (run, criterion) => {
   const fields = (page: PageData) => page.facts.controls.filter((control) => control.inForm || ["input", "select", "textarea"].includes(control.tag));
   return {
     pagesExamined: run.pages.length,
     formsInInventory: run.inventory.totals.forms ?? 0,
     note: "Velden in gesloten dialogen en zijpanelen zijn hier meegeteld als ze in de DOM staan, ook als ze niet zichtbaar zijn.",
     fields: group(run, fields, (control) => [control.tag, control.type, axName(control), control.labelText, control.region].join("|")).map((entry) => ({ tag: entry.example.tag, type: entry.example.type, role: entry.example.ax?.role, accessibleName: axName(entry.example) || null, label: entry.example.labelText || null, placeholder: entry.example.placeholder, required: entry.example.required, autocomplete: entry.example.autocomplete, visible: entry.example.visible, region: entry.example.region, pages: pagesText(entry.pages, run.pages.length), where: where(entry.example) })),
+    ...(criterion === "1.3.1" ? { fieldStructure: fieldStructure(run) } : {}),
   };
 };
 

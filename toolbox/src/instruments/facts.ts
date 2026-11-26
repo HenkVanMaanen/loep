@@ -55,7 +55,7 @@ export async function frameListeners(page: Page): Promise<{ frames: FrameListene
 export async function collectFacts(page: Page): Promise<Record<string, unknown>> {
   const facts = await call<Record<string, unknown>>(page, "collectFacts");
   const cdp = await page.context().newCDPSession(page);
-  for (const group of ["headings", "landmarks", "images", "links", "controls", "clickables", "iframes", "tables"]) {
+  for (const group of ["headings", "landmarks", "images", "links", "controls", "clickables", "iframes", "tables", "fieldGroups"]) {
     for (const item of facts[group] as Described[]) {
       (item as Record<string, unknown>).ax = await axInfo(cdp, item.ref);
     }
@@ -74,7 +74,7 @@ export async function collectFacts(page: Page): Promise<Record<string, unknown>>
  * for each: what the comparison of visible text and name needs at another window size.
  */
 export async function collectNamed(page: Page): Promise<{ links: Described[]; controls: Described[] }> {
-  const facts = await call<{ links: Described[]; controls: Described[] }>(page, "collectFacts");
+  const facts = await call<{ links: Described[]; controls: Described[] }>(page, "collectFacts", false);
   const cdp = await page.context().newCDPSession(page);
   for (const item of [...facts.links, ...facts.controls]) item.ax = await axInfo(cdp, item.ref);
   await cdp.detach();
