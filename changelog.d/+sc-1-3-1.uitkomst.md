@@ -1,0 +1,1 @@
+Het dossier voor 1.3.1 toont gekoppelde veldlabels en groepskandidaten, namen in geopende toestanden en links en afbeeldingen bij koppen zonder gewone tekst. De beoordelaar kan de vastgelegde gegevens direct bij de juiste plek lezen.

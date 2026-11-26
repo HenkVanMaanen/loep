@@ -1078,7 +1078,7 @@
     };
   }
 
-  function collectFacts() {
+  function collectFacts(includeFieldRelationships = true) {
     if (ownWorld) ask("clear");
     else registry.length = 0;
     const all = [...deepElements()];
@@ -1130,21 +1130,43 @@
       };
     });
 
+    const fieldGroups = new Map();
+    const relationships = (element, labels) => {
+      const groupPaths = [];
+      for (let group = composedParent(element); group; group = composedParent(group)) {
+        if (!group.matches("fieldset,[role~=group i],[role~=radiogroup i]")) continue;
+        if (!fieldGroups.has(group)) {
+          const legend = group.querySelector(":scope > legend");
+          fieldGroups.set(group, { ...describe(group), legend: legend ? text(legend, 120) : null });
+        }
+        groupPaths.push(fieldGroups.get(group).path);
+      }
+      return {
+        groupPaths,
+        labelLinks: labels.map((label) => ({ path: path(label), text: text(label, 120), visible: getComputedStyle(label).display === "contents" ? null : isVisible(label) && !visuallyHidden(label) })),
+      };
+    };
+
     const controls = select(INTERACTIVE)
       .filter((element) => !element.matches("a[href]"))
-      .map((element) => ({
-        ...describe(element),
-        type: element.getAttribute("type"),
-        name: element.getAttribute("name"),
-        autocomplete: element.getAttribute("autocomplete"),
-        required: member(element, "required") === true || element.getAttribute("aria-required") === "true",
-        placeholder: element.getAttribute("placeholder"),
-        tabindex: element.getAttribute("tabindex"),
-        disabled: member(element, "disabled") === true || element.getAttribute("aria-disabled") === "true",
-        labelText: member(element, "labels") ? [...member(element, "labels")].map((label) => text(label, 120)).join(" | ") : null,
-        inForm: closestComposed(element, "form,[role=form],nldd-form") !== null,
-        ...notRendered(element),
-      }));
+      .map((element) => {
+        const nativeLabels = member(element, "labels");
+        const labels = nativeLabels ? [...nativeLabels] : [];
+        return {
+          ...describe(element),
+          type: element.getAttribute("type"),
+          name: element.getAttribute("name"),
+          autocomplete: element.getAttribute("autocomplete"),
+          required: member(element, "required") === true || element.getAttribute("aria-required") === "true",
+          placeholder: element.getAttribute("placeholder"),
+          tabindex: element.getAttribute("tabindex"),
+          disabled: member(element, "disabled") === true || element.getAttribute("aria-disabled") === "true",
+          labelText: nativeLabels ? labels.map((label) => text(label, 120)).join(" | ") : null,
+          inForm: closestComposed(element, "form,[role=form],nldd-form") !== null,
+          ...notRendered(element),
+          ...(includeFieldRelationships ? relationships(element, labels) : {}),
+        };
+      });
 
     const langParts = select("[lang]")
       .filter((element) => element !== document.documentElement)
@@ -1186,6 +1208,7 @@
       backgroundImages,
       links,
       controls,
+      ...(includeFieldRelationships ? { fieldGroups: [...fieldGroups.values()] } : {}),
       clickables: clickables(),
       structure: structureCandidates(visibleHeadings),
       langParts,
