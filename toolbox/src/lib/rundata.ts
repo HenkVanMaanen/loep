@@ -586,7 +586,7 @@ export async function loadRun(dir: string): Promise<RunData> {
         engines: await readJson(join(dir, state.files.engines)),
         contrast: await readJson(join(dir, state.files.contrast)),
         ...(facts?.media ? { media: facts.media } : {}),
-        ...(facts ? { links: facts.links, controls: facts.controls, fieldGroups: facts.fieldGroups, timers: facts.timers, images: facts.images, backgroundImages: facts.backgroundImages } : {}),
+        ...(facts ? { links: facts.links, controls: facts.controls, timers: facts.timers, images: facts.images, backgroundImages: facts.backgroundImages } : {}),
         ...(await optional("contrastDark", "contrastDark")),
         ...(await optional("targets", "targets")),
         ...(await optional("textSpacing", "textSpacing")),
@@ -597,6 +597,7 @@ export async function loadRun(dir: string): Promise<RunData> {
         ...(await optional("focusCovered", "focusCovered")),
         ...(await optional("timeLimits", "timeLimits")),
         ...(await optional("timeLimitsAfterSubmit", "timeLimitsAfterSubmit")),
+        ...(facts?.fieldGroups ? { fieldGroups: facts.fieldGroups } : {}),
       };
     }
   }
