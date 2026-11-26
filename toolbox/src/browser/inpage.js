@@ -155,6 +155,8 @@
   // The same for a press of the pointer: which elements hear it, so the press probe tries those and not every element of the same tag.
   const DOWN_EVENT_TYPES = ["mousedown", "pointerdown", "touchstart"];
   const downTargets = new WeakSet();
+  const DRAG_EVENTS = ["dragstart", "drag", "dragend", "dragenter", "dragover", "dragleave", "drop", "pointermove", "pointerrawupdate", "mousemove", "touchmove"];
+  const dragTargets = new WeakMap();
   // What a control does when it is pointed at, gets focus or is pressed, as far as its own code says:
   // per element and event the code of each listener, as a short hash. Two controls whose listeners
   // have the same code behave alike; that is what makes them one kind for the pointer probes.
@@ -178,6 +180,11 @@
     if (type === "click" && frozenListeners === null && this instanceof Element) clickTargets.add(this);
     // Also after the counts were frozen: a component that only starts to listen when it is first drawn or opened is found in the state it is opened in.
     if (DOWN_EVENT_TYPES.includes(type) && this instanceof Element) downTargets.add(this);
+    if (DRAG_EVENTS.includes(type)) {
+      const events = dragTargets.get(this) ?? new Set();
+      events.add(type);
+      dragTargets.set(this, events);
+    }
     if ((DOWN_EVENT_TYPES.includes(type) || HOVER_FOCUS_TYPES.includes(type)) && this instanceof Element) {
       const known = listenerCode.get(this) ?? new Set();
       known.add(`${type}:${codeOf(rest[0])}`);
@@ -264,6 +271,8 @@
     if (kind === "down") return downTargets.has(target);
     if (kind === "signature") return listenerSignature(target, extra.types, extra.labels);
     if (kind === "counts") return watchedCounts();
+    if (kind === "dragEvents") return dragEventsOn(target);
+    if (kind === "dragDelegated") return dragDelegated();
     if (kind === "handler") return typeof target[extra.name] === "function";
     if (kind === "member") {
       let value = target[extra.name];
@@ -1608,6 +1617,74 @@
       .filter((src) => /^https?:/.test(src));
   }
 
+  function dragEventsOn(target) {
+    return DRAG_EVENTS.filter((event) => dragTargets.get(target)?.has(event) || target.hasAttribute?.(`on${event}`) || typeof target[`on${event}`] === "function");
+  }
+
+  function dragDelegated() {
+    return Object.fromEntries([[window, "window"], [document, "document"], [document.documentElement, "html"], [document.body, "body"]]
+      .flatMap(([target, name]) => {
+        const events = target ? dragEventsOn(target) : [];
+        return events.length ? [[name, events]] : [];
+      }));
+  }
+
+  /** A read of the rendered document, with starting points for a drag and nearby controls to try. */
+  function dragSignals() {
+    const status = performance.getEntriesByType("navigation")[0]?.responseStatus;
+    if (!document.body || location.protocol === "chrome-error:" || status >= 400) {
+      throw new Error(status >= 400 ? `het document gaf foutstatus ${status}` : "het venster toont geen geladen document");
+    }
+    const controls = deepQueryAll('button,input,select,textarea,[role=button],a[aria-controls]');
+    const cursorSignal = /^(grab|grabbing|move|all-scroll|col-resize|row-resize|ew-resize|ns-resize|[nesw]{1,2}-resize)$/;
+    const scope = 'fieldset,[role=group],[aria-roledescription],li,form';
+    const rows = [];
+    const customElements = new Set();
+    let omitted = 0;
+    for (const element of deepElements(document.body)) {
+      if (element === document.body) continue;
+      const role = element.getAttribute("role");
+      const signals = ownWorld ? ask("dragEvents", element) : dragEventsOn(element);
+      if (element.matches('[draggable="true" i]')) signals.push("draggable");
+      if (element.matches('input[type="range" i]')) signals.push("input[range]");
+      if (role?.split(/\s+/).some((value) => ["slider", "scrollbar"].includes(value)) || (role === "separator" && element.matches('[tabindex],[aria-valuenow]'))) signals.push(`role=${role}`);
+      if (element.matches('canvas,object,embed,audio[controls],video[controls]')) signals.push(element.localName);
+      if (/car(?:ou|rou)sel|diashow|slideshow|sortable|sorteerbaar|handtekening|signature|interactive map|interactieve kaart/i.test(element.getAttribute("aria-roledescription") ?? "")) signals.push("aria-roledescription");
+      const rendered = isVisible(element);
+      const parent = composedParent(element);
+      if (rendered) {
+        if (element.localName.includes("-")) customElements.add(element.localName);
+        const style = getComputedStyle(element);
+        if (cursorSignal.test(style.cursor) && (!parent || getComputedStyle(parent).cursor !== style.cursor)) signals.push(`cursor=${style.cursor}`);
+        if (style.touchAction === "none") signals.push("touch-action=none");
+      }
+      if (!signals.length) continue;
+      if (rows.length === 60) {
+        omitted++;
+        continue;
+      }
+      const group = closestComposed(element, scope) ?? parent;
+      const alternatives = controls.filter((control) => control !== element && isVisible(control) && (
+        (element.id && (control.getAttribute("aria-controls") ?? "").split(/\s+/).includes(element.id) && control.getRootNode() === element.getRootNode()) ||
+        (group !== document.body && group !== null && (group.contains(control) || closestComposed(control, scope) === group))
+      ));
+      rows.push({
+        where: path(element).join(" >>> "), tag: element.localName, signals, rendered,
+        label: element.getAttribute("aria-label")?.slice(0, 80) || text(element, 80),
+        ...(element.hasAttribute("aria-orientation") ? { orientation: element.getAttribute("aria-orientation") } : {}),
+        ...(element.hasAttribute("aria-valuenow") ? { value: element.getAttribute("aria-valuenow") } : {}),
+        alternatives: alternatives.slice(0, 5).map((control) => ({ where: path(control).join(" >>> "), label: (control.getAttribute("aria-label") || text(control, 60) || control.getAttribute("title") || control.localName).slice(0, 80) })),
+        ...(alternatives.length > 5 ? { alternativesOmitted: alternatives.length - 5 } : {}),
+      });
+    }
+    return {
+      delegated: ownWorld ? ask("dragDelegated") : dragDelegated(),
+      customElements: [...customElements].sort(),
+      candidates: rows,
+      omitted,
+    };
+  }
+
   function focusState() {
     const element = deepActiveElement();
     if (!element || element === document.body || element === document.documentElement) return null;
@@ -2715,6 +2792,7 @@
     settingControls,
     bodyText,
     frameSources,
+    dragSignals,
     graphicBoxes,
     textRuns,
     resolve,

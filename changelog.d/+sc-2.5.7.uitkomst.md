@@ -1,0 +1,1 @@
+Bij sleepbewegingen toont het dossier per pagina, geopende toestand en leesbaar venster welke onderdelen aanleiding geven om slepen te proberen en welke bediening in de buurt staat. De beoordelaar kan gericht meten en ziet welke vensters niet konden worden gelezen.

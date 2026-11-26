@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 import { axInfo, call } from "../browser/call.ts";
+import { dragReport } from "./drag.ts";
 import { mediaReport } from "./media.ts";
 
 export interface Described {
@@ -54,6 +55,7 @@ export async function frameListeners(page: Page): Promise<{ frames: FrameListene
 /** Everything the in-page library can read from the page as it is now, with what assistive technology gets for each element. */
 export async function collectFacts(page: Page): Promise<Record<string, unknown>> {
   const facts = await call<Record<string, unknown>>(page, "collectFacts");
+  facts.dragging = await dragReport(page);
   const cdp = await page.context().newCDPSession(page);
   for (const group of ["headings", "landmarks", "images", "links", "controls", "clickables", "iframes", "tables"]) {
     for (const item of facts[group] as Described[]) {
