@@ -86,6 +86,7 @@ test("the press probe records what happens on pointer down and whether releasing
   // A function that completes on the press and stays: no way to back out.
   const onDown = await probe("on-down");
   assert.equal(onDown.changeOnDown, 'tekst verschenen: "Bedankt voor uw oordeel."; statusmelding: "Bedankt voor uw oordeel."');
+  assert.equal(onDown.where, "#on-down");
   assert.equal(onDown.changeAfterReleaseElsewhere, null);
   assert.equal(onDown.undoneByReleasingElsewhere, false);
   // Something that shows on the press and goes on release: the user can back out.
@@ -98,7 +99,32 @@ test("the press probe records what happens on pointer down and whether releasing
   assert.equal(plain.changeOnDown, null);
   assert.equal(plain.changeAfterReleaseElsewhere, null);
   assert.equal(plain.undoneByReleasingElsewhere, undefined);
+  assert.equal(plain.where, undefined);
   assert.ok(Object.keys(plain.details!.onDown.style).length > 0, "the look of the pressed button is recorded, not counted");
+});
+
+test("the sweep reads inline down-event handlers in the measured document and its open shadow roots", async () => {
+  const page = await open("/press.html");
+  try {
+    assert.deepEqual((await call<{ downEventAttributes: unknown }>(page, "collectFacts")).downEventAttributes, []);
+    await page.evaluate(() => {
+      const button = document.getElementById("on-down")!;
+      button.setAttribute("onpointerdown", "togglePreview()");
+      button.setAttribute("onclick", "submitChoice()");
+      const host = document.createElement("div");
+      host.id = "shadow";
+      document.body.append(host);
+      host.attachShadow({ mode: "open" }).innerHTML = '<button id="inside" onmousedown="return false" ontouchstart="">Aanwijzen</button>';
+    });
+    const facts = await call<{ downEventAttributes: unknown }>(page, "collectFacts");
+    assert.deepEqual(facts.downEventAttributes, [
+      { where: "#on-down", event: "pointerdown", code: "togglePreview()" },
+      { where: "#shadow >>> #inside", event: "mousedown", code: "return false" },
+      { where: "#shadow >>> #inside", event: "touchstart", code: "" },
+    ]);
+  } finally {
+    await page.context().close();
+  }
 });
 
 test("the press probe finds a box through its label and a switch through the document, one of each kind, and sees a state that flips", async () => {

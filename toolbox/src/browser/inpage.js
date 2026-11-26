@@ -1192,6 +1192,13 @@
       iframes,
       tables,
       mainText,
+      downEventAttributes: select("[onmousedown],[onpointerdown],[ontouchstart]").flatMap((element) => {
+        const where = path(element).join(" >>> ");
+        return DOWN_EVENT_TYPES.flatMap((event) => {
+          const code = element.getAttribute(`on${event}`);
+          return code === null ? [] : [{ where, event, code }];
+        });
+      }),
       ...watchedCounts(),
       counts: {
         elements: all.length,

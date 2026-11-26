@@ -148,6 +148,18 @@ test("1.4.13, 1.4.3 and 2.5.2: the dossier says how many kinds there are, that e
   assert.deepEqual([older.targetsNotExamined, older.kinds], [237, undefined]);
 });
 
+test("2.5.2: an inspected document without an inline handler differs from an unmeasured one", () => {
+  const first = page("P1");
+  first.facts.downEventAttributes = [];
+  const hit = { where: "#verstuur", event: "mousedown", code: "submitChoice()" };
+  const run = withStates(runOf([first, page("P2")]), [state("component-paneel"), state("component-frame", { reached: false })], { "component-paneel": { downEventAttributes: [hit] } });
+  const result = pointer(run, "2.5.2") as { downEventAttributes: Record<string, unknown> };
+  assert.deepEqual(result.downEventAttributes.checked, [{ place: "P1", matches: 0 }, { place: "component-paneel", matches: 1 }]);
+  assert.deepEqual(result.downEventAttributes.notChecked, ["P2", "component-frame"]);
+  assert.deepEqual(result.downEventAttributes.hits, [{ place: "component-paneel", ...hit }]);
+  assert.equal(Object.hasOwn(pointer(run, "2.5.7") as object, "downEventAttributes"), false);
+});
+
 const order = (extra: Record<string, unknown> = {}) => ({ note: "", sequence: [{ index: 1, kind: "heading", tag: "h1", text: "Titel", path: ["h1"], region: "main", box }, { index: 2, kind: "control", tag: "a", text: "Terug", path: ["#terug"], region: "main", box }], jumps: [{ from: 1, to: 2, direction: "omhoog" }], cssOrder: [], reversed: [], positioned: [], positiveTabindex: [], ...extra });
 
 test("1.3.2: the order of code and screen per page, wide and at 320, in every state, and text laid out with spaces", () => {

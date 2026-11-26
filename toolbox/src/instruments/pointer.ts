@@ -120,7 +120,7 @@ export async function probeDownEvent(page: Page, target: Described & Partial<Pic
   const released = await read();
   const base = { page: options.label, control: `${target.tag} "${target.text.slice(0, 40)}" [${target.region ?? "-"}]`, ...(target.kind ? { kind: target.kind } : {}), ...(target.via ? { via: target.via } : {}), listenerOn: [...options.listening].sort().join(", ") };
   // A page that could not be read any more went somewhere else: that is a reaction too.
-  if (!away || !pointing || !down) return { ...base, changeOnDown: down ? null : `de pagina was na het indrukken niet meer te lezen (adres ${page.url()})`, changeAfterReleaseElsewhere: null };
+  if (!away || !pointing || !down) return { ...base, changeOnDown: down ? null : `de pagina was na het indrukken niet meer te lezen (adres ${page.url()})`, changeAfterReleaseElsewhere: null, ...(down ? {} : { where: place }) };
   const onDown = compareChange(pointing, down);
   const hover = compareChange(away, pointing);
   // What pointing brought goes again when the pointer leaves; taking that back is not the control acting.
@@ -129,10 +129,13 @@ export async function probeDownEvent(page: Page, target: Described & Partial<Pic
   const acted = hasChange(onDown, ACTED);
   // Is what the press did still there once the pointer was released somewhere else?
   const undone = acted && released !== null && !hasChange(compareChange(pointing, released, fromPointing), ACTED);
+  const changeOnDown = changeNl(onDown, ACTED);
+  const changeAfterReleaseElsewhere = afterRelease ? changeNl(afterRelease, ACTED) : `de pagina was na het loslaten niet meer te lezen (adres ${page.url()})`;
   return {
     ...base,
-    changeOnDown: changeNl(onDown, ACTED),
-    changeAfterReleaseElsewhere: released === null ? `de pagina was na het loslaten niet meer te lezen (adres ${page.url()})` : changeNl(afterRelease!, ACTED),
+    changeOnDown,
+    changeAfterReleaseElsewhere,
+    ...(changeOnDown !== null || changeAfterReleaseElsewhere !== null ? { where: place } : {}),
     ...(acted ? { undoneByReleasingElsewhere: undone, effectOnDown: effects(onDown) } : {}),
     details: { onDown, afterRelease },
   };

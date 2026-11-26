@@ -1,0 +1,1 @@
+Voor aanwijzerannulering (2.5.2) legt de veegronde handlers uit HTML-attributen vast. Bij een reactie vermeldt de indrukproef de selector. Een beoordelaar kan op dezelfde plek indrukken en loslaten elders in één eigen proef meten.

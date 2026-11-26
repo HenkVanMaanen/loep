@@ -36,8 +36,9 @@ import type { Blocker, Postcondition } from "./sitemodel.ts";
  * that an animation on scroll hides again once it is out of view keeps its shown state when the page is back at the top.
  * 20: a read of data (fetch, XHR) with GET or HEAD from a host outside the scope of the run passes again, as it now does in a
  * session, so what it fills is measured; the POST of an embedded player that a fixed read rule covers passes too (`FIXED_READS`).
+ * 21: the HTML attributes for down-event handlers and the selector of a control that reacted to the press (2.5.2).
  */
-export const SWEEP_STAMP_VERSION = 20;
+export const SWEEP_STAMP_VERSION = 21;
 
 /**
  * How the content of a page is read for its stamp. Raise when that changes: an older hash can then never match,

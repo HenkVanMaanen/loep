@@ -1657,8 +1657,23 @@ function listenerTable(run: RunData, events: string[]): { event: string; target:
   return rows.map((entry) => ({ event: entry.example.split("|")[0]!, target: entry.example.split("|")[1]!, pages: pagesText(entry.pages, run.pages.length) }));
 }
 
+/** Places whose document was searched for inline down-event handlers, independently of the listener count. */
+function downEventAttributes(run: RunData) {
+  const places = [
+    ...run.pages.map((page) => ({ place: page.label, handlers: page.facts.downEventAttributes })),
+    ...(run.collectFailed ?? []).map((page) => ({ place: page.label, handlers: undefined })),
+    ...(run.siteStates?.states ?? []).map((state) => ({ place: state.id, handlers: run.stateEvidence?.[state.id]?.downEventAttributes })),
+  ];
+  return {
+    method: "Gezocht naar onmousedown, onpointerdown en ontouchstart in het gemeten document, met de open schaduw-DOM. Een insluiting is hier alleen onderzocht als die apart is gemeten. Bij elke treffer staan de plek en de HTML-code van de handler.",
+    checked: places.flatMap(({ place, handlers }) => (handlers === undefined ? [] : [{ place, matches: handlers.length }])),
+    notChecked: places.filter(({ handlers }) => handlers === undefined).map(({ place }) => place),
+    hits: places.flatMap(({ place, handlers }) => (handlers ?? []).map((handler) => ({ place, ...handler }))),
+  };
+}
+
 /** Which pointer, drag and motion events the page listens for: where gesture criteria can apply at all. */
-export const pointer: Extractor = (run) => ({
+export const pointer: Extractor = (run, criterion) => ({
   pagesExamined: run.pages.length,
   method: "Elke registratie van een event listener is geteld vanaf het laden van de pagina, per soort event en per soort element.",
   gestureListeners: listenerTable(run, GESTURE_EVENTS),
@@ -1666,6 +1681,7 @@ export const pointer: Extractor = (run) => ({
   moveListeners: listenerTable(run, ["touchmove", "pointermove", "mousemove", "drag", "dragstart", "dragover", "gesturestart", "gesturechange"]),
   motionListeners: listenerTable(run, MOTION_EVENTS),
   frames: frameListenerTable(run),
+  ...(criterion === "2.5.2" ? { downEventAttributes: downEventAttributes(run) } : {}),
   draggableElements: run.inventory.totals.draggable ?? 0,
   downEventProbe: run.states?.downEvents
     ? {

@@ -204,6 +204,6 @@ export const press: Handler = async (context, _args, options) => {
   const wentThrough = down.changed || released.changed;
   return {
     result: { mode, completesOnDown: down.changed, wentThrough, down: down.result, afterAbort: released.result },
-    print: { down: down.print, afterAbort: released.print, completesOnDown: down.changed, wentThrough, note: wentThrough ? "de functie ging door hoewel de aanwijzer naast het element is losgelaten: afbreken kan niet" : "naast het element loslaten breekt de handeling af" },
+    print: { down: down.print, afterAbort: released.print, completesOnDown: down.changed, wentThrough, note: wentThrough ? "er was een verandering; vergelijk indrukken en loslaten om te zien of het effect bleef" : "bij indrukken en loslaten elders is geen verandering gemeten" },
   };
 };
