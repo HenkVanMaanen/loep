@@ -239,6 +239,11 @@ async function ensureDaemon(runDir: string, forwarded: string[]): Promise<string
   throw new Error(`de sessie kon niet starten${reason ? `: ${reason.replace(/^loep: /, "")}` : ""} (log: ${log})`);
 }
 
+export async function sessionClient(runDir: string): Promise<(request: Request) => Promise<Response>> {
+  const socket = await ensureDaemon(runDir, []);
+  return (request) => send(socket, request);
+}
+
 const DAEMON_OPTIONS = ["scope", "allow-host", "strict", "max-sessions", "nav-delay", "command-timeout", "idle-minutes", "single-browser"];
 const CLIENT_ONLY = new Set(["run", "session", "max-commands", "max-minutes", "model", "reason", "key", ...DAEMON_OPTIONS]);
 

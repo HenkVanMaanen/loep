@@ -141,6 +141,8 @@ Het rapport zegt bovenaan, bij de status, hoeveel criteria open zijn en waarom: 
 
 De procedures staan in [procedures/](../procedures/README.md), één per succescriterium. Ze zijn tegelijk de methodebeschrijving en de opdracht aan het model. Elke procedure heeft gesloten beslisregels waarvan de laatste altijd "anders: kan niet bepalen" is.
 
+Voor een voorbereide meting van één pagina kan de onderzoeker na `tasks --only 1.1.1` eerst `fast-alt --run <map>` uitvoeren zodra de beoordelingsopdracht openstaat. De meting onderzoekt bekende afbeeldingen met een bestandsnaam of een algemeen woord als naam en pictogrammen in bedieningselementen zonder naam. Ze opent de pagina in twee afzonderlijke sessies en legt de namen en uitsneden vast. Een bevestigd gebrek gaat met de gewone controles door naar `evaluate`. Bij een open opdracht volgt de onderzoeker de gewone taakstappen.
+
 ## Wat de veegronde meet
 
 | Bewijs | Hoe verzameld |
