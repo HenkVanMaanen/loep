@@ -1,0 +1,1 @@
+Het dossier voor Reflow (1.4.10) toont per toestand wat op 320 pixels uitsteekt of wordt afgekapt. De beoordelaar en verifieerder meten een bevinding gericht na op de betrokken plek. De steekproef blijft nodig voor een goedkeuring.

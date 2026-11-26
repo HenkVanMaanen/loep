@@ -1095,6 +1095,36 @@ function openedComponents(run: RunData): Record<string, unknown> {
   };
 }
 
+/** What the sweep actually drew at 320 pixels, with enough detail to pick a place to measure again. */
+function reflowStates(run: RunData): Record<string, unknown>[] {
+  return (run.siteStates?.states ?? []).map((state) => {
+    const probe = run.stateEvidence?.[state.id]?.reflow;
+    const page = run.pages.find((entry) => entry.item.url === state.url)?.label ?? null;
+    return {
+      state: state.id,
+      kind: state.kind,
+      page,
+      openWith: state.reached ? openCommand(state, run) : null,
+      openedAt: state.viewport,
+      reached: state.reached,
+      ...(state.reasonNl ? { reasonNl: state.reasonNl } : {}),
+      ...(state.frame ? { frame: state.frame } : {}),
+      ...(state.viewport && state.viewport.width > SMALLEST_WIDTH ? { widerScreenshot: state.files.screenshot ?? null } : {}),
+      measuredAt320: Boolean(probe),
+      ...(probe ? {
+        stateReachedAt320: probe.stateReachedAt320 ?? null,
+        viewportWidth: probe.viewportWidth,
+        scrollWidth: probe.scrollWidth,
+        horizontalScroll: probe.horizontalScroll,
+        elementsWiderThanViewport: probe.offenders.map((item) => ({ tag: item.tag, text: item.text.slice(0, 60), right: item.right, where: where(item), ...scrollContainer(item.overflowContainer) })),
+        clippedText: probe.clipped.map((item) => ({ tag: item.tag, text: item.text.slice(0, 80), textOverflow: item.textOverflow, where: where(item), ...(item.textCut ? { textCut: item.textCut } : {}) })),
+        screenshot: state.files.reflowScreenshot ?? null,
+        ...(probe.screenshotClippedAt ? { screenshotClippedAt: probe.screenshotClippedAt } : {}),
+      } : {}),
+    };
+  });
+}
+
 function overflow(name: "reflow" | "zoom200" | "portrait", method: string): Extractor {
   return (run) => {
     const lost = (page: PageData): string[] => {
@@ -1112,6 +1142,7 @@ function overflow(name: "reflow" | "zoom200" | "portrait", method: string): Extr
       controlsNotVisibleAtThisSize: group(run, lost, (control) => control).map((entry) => ({ control: entry.example, pages: pagesText(entry.pages, run.pages.length) })),
       note: "Bedieningselementen die bij deze afmeting niet zichtbaar zijn, kunnen in een uitklapmenu zitten. Dat is toegestaan als ze daar bereikbaar blijven; controleer dat op de schermafbeelding.",
       content: contentCompared(run, name),
+      ...(name === "reflow" ? { states: reflowStates(run) } : {}),
       ...(name === "portrait" ? { rotation: rotation(run), componentsPerPageType: componentsPerPageType(run) } : {}),
       screenshots: representativePages(run).map((page) => ({ page: page.label, file: `${page.dir}/probes/${name}.png` })),
     };
