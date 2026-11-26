@@ -1,0 +1,1 @@
+Bij 2.5.8 rekent loep de tussenruimte ook na bij kleine doelen die mogelijk in een zin staan. Het dossier wijst de plek van te dicht opeengepakte doelen en de vastgelegde afbakeningsgrenzen aan, zodat de beoordelaar gericht kan nameten

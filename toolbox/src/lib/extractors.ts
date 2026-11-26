@@ -1,5 +1,6 @@
 import type { MediaElement, MediaReport } from "../instruments/media.ts";
 import type { ContentInventory } from "../instruments/overflow.ts";
+import { MINIMUM_TARGET, spacingConflict } from "../instruments/target.ts";
 import { contrastRatio, floorRatio, type Rgb } from "./contrast.ts";
 import { acceptedGapFor, frameStanding, NOT_OPENED_ON_PAGE_TYPE } from "./sitemodel.ts";
 import { enginesWithoutResult, type EngineOutcome } from "./engines.ts";
@@ -7,6 +8,7 @@ import { REGULAR_PATH, type Clickable, type Element, type Facts, type FormErrorS
 import { documents } from "./document-evidence.ts";
 import { judgeTimer, TIMER_RULE_NL, timerNl, watchNl, type TimeLimitProbe } from "./timelimits.ts";
 import { canonicalJson } from "./canonical.ts";
+import { scopeHostOf, siteOrigins } from "./origins.ts";
 import { whyCandidateNl } from "./statusmessages.ts";
 
 /**
@@ -1219,46 +1221,88 @@ export const textSpacing: Extractor = (run) => {
   };
 };
 
-export const MINIMUM_TARGET = 24;
-
-type TargetBox = PageData["targets"][number]["box"];
-const boxContains = (outer: TargetBox, inner: TargetBox): boolean => outer.x <= inner.x && outer.y <= inner.y && outer.x + outer.width >= inner.x + inner.width && outer.y + outer.height >= inner.y + inner.height;
+/** A recorded scope refusal for a frame that counts, on a host the inventory did not put in scope. */
+function targetFramesBlockedByScope(run: RunData) {
+  const states = run.siteStates?.states ?? [];
+  const frames = run.siteModel?.frames.filter((frame) => frameStanding(frame).counts) ?? [];
+  if (frames.length === 0 || states.length === 0) return [];
+  const hosts = new Set([...siteOrigins(run.inventory), ...run.inventory.pages.map((page) => page.url)].map(scopeHostOf));
+  return frames.flatMap((frame) => {
+    if (hosts.has(scopeHostOf(frame.address))) return [];
+    const url = new URL(frame.address);
+    const refusedIn = states.filter((state) => state.refused?.some((request) => request.kind === "scope" && request.method === "GET" && request.address === `${url.host}${url.pathname}`));
+    if (refusedIn.length === 0) return [];
+    return [{
+      address: frame.address,
+      descriptionNl: frame.descriptionNl,
+      pages: [...new Set(refusedIn.flatMap((state) => state.url === null ? [] : [run.pages.find((page) => page.item.url === state.url)?.label ?? state.url]))],
+      states: refusedIn.map((state) => state.id),
+    }];
+  });
+}
 
 export const targetSize: Extractor = (run) => {
   type Target = PageData["targets"][number];
-  // The spacing exception: a circle of 24 pixels centred on a small target may not touch another target,
-  // nor the circle of another small target.
-  const tooClose = (all: Target[], target: Target): string | null => {
-    const centre = { x: target.box.x + target.box.width / 2, y: target.box.y + target.box.height / 2 };
-    const radius = MINIMUM_TARGET / 2;
-    for (const other of all) {
-      if (other === target || where(other) === where(target)) continue;
-      // A focusable region around the target (a main with tabindex), or a control inside it, is not a neighbour to keep distance from.
-      if (boxContains(other.box, target.box) || boxContains(target.box, other.box)) continue;
-      const otherSmall = other.width < MINIMUM_TARGET || other.height < MINIMUM_TARGET;
-      const nearestX = Math.max(other.box.x, Math.min(centre.x, other.box.x + other.box.width));
-      const nearestY = Math.max(other.box.y, Math.min(centre.y, other.box.y + other.box.height));
-      const toBox = Math.hypot(centre.x - nearestX, centre.y - nearestY);
-      const toCentre = Math.hypot(centre.x - (other.box.x + other.box.width / 2), centre.y - (other.box.y + other.box.height / 2));
-      if (toBox < radius || (otherSmall && toCentre < 2 * radius)) return `${other.tag} "${(axName(other) || other.text).slice(0, 30)}"`;
-    }
-    return null;
+  const small = (all: Target[]) => all
+    .filter((target) => target.width < MINIMUM_TARGET || target.height < MINIMUM_TARGET)
+    .map((target) => ({ ...target, tooCloseTo: spacingConflict(target, all)?.neighbour ?? null }));
+  const show = (target: ReturnType<typeof small>[number]) => ({
+    tag: target.tag,
+    name: axName(target) || target.text.slice(0, 60),
+    size: `${target.width}x${target.height}`,
+    ...(target.tooCloseTo
+      ? { spacing: `te dicht bij ${target.tooCloseTo.tag} "${(axName(target.tooCloseTo) || target.tooCloseTo.text).slice(0, 30)}"`, neighbourWhere: where(target.tooCloseTo) }
+      : { spacing: "genoeg ruimte: de cirkel van 24 pixels raakt geen ander doel" }),
+    ...(target.inlineInText ? { possiblyInText: true } : {}),
+    region: target.region,
+    where: where(target),
+    box: target.box,
+  });
+  const alreadySpaced = (target: ReturnType<typeof small>[number]) => target.inlineInText && target.tooCloseTo === null;
+  const perPage = (select: (page: PageData) => Target[]) => {
+    const measured = new Map(run.pages.map((page) => [page, small(select(page))]));
+    const grouped = group(run, (page) => measured.get(page)!.filter((target) => !alreadySpaced(target)), (target) => canonicalJson([
+      target.tag, target.text.slice(0, 40), target.width, target.height, target.region, target.inlineInText,
+      target.tooCloseTo ? [where(target), where(target.tooCloseTo), axName(target.tooCloseTo) || target.tooCloseTo.text] : null,
+    ]));
+    return {
+      inlineWithEnoughSpacing: [...measured.values()].reduce((total, targets) => total + targets.filter(alreadySpaced).length, 0),
+      smallerThanMinimum: grouped.map((entry) => ({ ...show(entry.example), occurrences: entry.count, pages: pagesText(entry.pages, run.pages.length), firstPage: entry.pages[0] })),
+    };
   };
-  const small = (all: Target[]) => all.filter((target) => !target.inlineInText && (target.width < MINIMUM_TARGET || target.height < MINIMUM_TARGET)).map((target) => ({ ...target, tooCloseTo: tooClose(all, target) }));
-  const show = (target: ReturnType<typeof small>[number]) => ({ tag: target.tag, name: axName(target) || target.text.slice(0, 60), size: `${target.width}x${target.height}`, spacing: target.tooCloseTo ? `te dicht bij ${target.tooCloseTo}` : "genoeg ruimte: de cirkel van 24 pixels raakt geen ander doel", region: target.region, where: where(target), box: target.box });
-  const rows = (select: (page: PageData) => Target[]) =>
-    group(run, (page) => small(select(page)), (target) => `${target.tag}|${target.text.slice(0, 40)}|${target.width}x${target.height}|${target.region}|${target.tooCloseTo !== null}`).map((entry) => ({ ...show(entry.example), occurrences: entry.count, pages: pagesText(entry.pages, run.pages.length), firstPage: entry.pages[0] }));
   const measuredSmallest = run.pages.filter((page) => page.smallest?.targets !== undefined);
   return {
     pagesExamined: run.pages.length,
     targetsExamined: run.pages.reduce((sum, page) => sum + page.targets.length, 0),
-    method: `Afmeting van elk zichtbaar bedieningselement. Links in lopende tekst vallen onder de uitzondering en zijn niet meegeteld. Voor elk doel kleiner dan ${MINIMUM_TARGET} bij ${MINIMUM_TARGET} CSS-pixels is de uitzondering voor tussenruimte nagerekend: een cirkel van ${MINIMUM_TARGET} pixels om het midden mag geen ander doel raken en ook niet de cirkel van een ander klein doel (zie spacing). Gemeten in het standaardvenster, op 320 pixels breed (\`at320\`) en in elke toestand uit het sitemodel (\`states\`), elk met de bedieningselementen die daar zichtbaar zijn.`,
-    smallerThanMinimum: rows((page) => page.targets),
-    at320: measuredSmallest.length === 0 ? { examined: false, note: "Op 320 pixels breed zijn de afmetingen in deze run niet gemeten." } : { examined: true, pagesExamined: measuredSmallest.length, targetsExamined: measuredSmallest.reduce((sum, page) => sum + page.smallest!.targets.length, 0), smallerThanMinimum: rows((page) => page.smallest?.targets ?? []) },
+    method: `Afmeting van zichtbare bedieningselementen. Voor elk doel kleiner dan ${MINIMUM_TARGET} bij ${MINIMUM_TARGET} CSS-pixels is de tussenruimte nagerekend, ook voor doelen die mogelijk in een zin staan. Bij zulke doelen met genoeg ruimte staat alleen het aantal onder inlineWithEnoughSpacing. Alle andere kleine doelen staan in smallerThanMinimum. Een cirkel van ${MINIMUM_TARGET} pixels om het midden mag geen ander doel raken en ook niet de cirkel van een ander klein doel.`,
+    ...perPage((page) => page.targets),
+    at320: {
+      examined: measuredSmallest.length > 0,
+      ...(measuredSmallest.length === 0 ? { note: "Op 320 pixels breed zijn de afmetingen in deze run niet gemeten." } : {}),
+      pagesExamined: measuredSmallest.length,
+      pagesMissing: run.pages.filter((page) => page.smallest?.targets === undefined).map((page) => page.label),
+      targetsExamined: measuredSmallest.reduce((sum, page) => sum + page.smallest!.targets.length, 0),
+      ...perPage((page) => page.smallest?.targets ?? []),
+    },
     states: reachedStates(run).map((state) => {
       const targets = run.stateEvidence?.[state.id]?.targets;
-      return targets ? { state: state.id, examined: true, viewport: state.viewport ? `${state.viewport.width}x${state.viewport.height}` : null, targetsExamined: targets.length, smallerThanMinimum: small(targets).map(show) } : { state: state.id, examined: false };
+      const view = {
+        state: state.id,
+        capturedOn: run.pages.find((page) => page.item.url === state.url)?.label ?? state.url,
+        viewport: state.viewport ? `${state.viewport.width}x${state.viewport.height}` : null,
+        screenshot: state.files.screenshotFullPage ?? null,
+      };
+      if (!targets) return { ...view, examined: false };
+      const measured = small(targets);
+      return {
+        ...view,
+        examined: true,
+        targetsExamined: targets.length,
+        inlineWithEnoughSpacing: measured.filter(alreadySpaced).length,
+        smallerThanMinimum: measured.filter((target) => !alreadySpaced(target)).map(show),
+      };
     }),
+    framesBlockedByScope: targetFramesBlockedByScope(run),
   };
 };
 
