@@ -40,6 +40,7 @@ export interface SkipLinkAim {
 export interface StateEvidence {
   /** Audio and video as they were in this state. Absent in older runs. */
   media?: MediaReport;
+  downEventAttributes?: Facts["downEventAttributes"];
   engines: EngineRun;
   contrast: Pick<PageContrast, "measurements" | "controls" | "graphics">;
   /** The same on the dark scheme, for which the state was opened again. Absent for a blocker and in older runs. */
@@ -185,6 +186,8 @@ export interface Facts {
   tables: (Element & { caption: string; headerCells: number; rows: number })[];
   counts: Record<string, number | string[]>;
   listeners: Record<string, Record<string, number>>;
+  /** Inline down-event handlers in this document, including open shadow roots. Absent in older runs. */
+  downEventAttributes?: { where: string; event: string; code: string }[];
   /** The same count for every frame on the page, read on the spot. Absent in older runs. */
   frameListeners?: FrameListeners[];
   /** Frames whose listeners could not be counted, by address. Absent in older runs. */
@@ -469,6 +472,8 @@ export interface States {
     /** Set for a press in a state of the site model, and for one in the narrow window. */
     state?: string;
     viewport?: "smal";
+    /** Selector chain of a control for which a change was recorded, in the measured document. */
+    where?: string;
     details?: { onDown: Change; afterRelease: Change | null };
   }[];
 }
@@ -584,6 +589,7 @@ export async function loadRun(dir: string): Promise<RunData> {
         ...(await optional("targets", "targets")),
         ...(await optional("textSpacing", "textSpacing")),
         ...(await optional("order", "order")),
+        ...(facts?.downEventAttributes ? { downEventAttributes: facts.downEventAttributes } : {}),
         ...(await optional("pictures", "pictures")),
         ...(await optional("languages", "languages")),
         ...(await optional("tabwalk", "tabwalk")),

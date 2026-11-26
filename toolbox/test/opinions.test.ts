@@ -1417,7 +1417,7 @@ test("press shows on which part of a press a function goes off, and whether it c
   await loep("open", ["/inputs.html"]);
   const stuck = await loep("press", ["css:#on-down"], { abort: true });
   assert.deepEqual({ completesOnDown: stuck.completesOnDown, wentThrough: stuck.wentThrough }, { completesOnDown: true, wentThrough: true });
-  assert.match(stuck.note as string, /afbreken kan niet$/);
+  assert.match(stuck.note as string, /vergelijk indrukken en loslaten om te zien of het effect bleef/);
   // A function on the click: nothing on down, it goes off on up, and letting go beside the button aborts it.
   await loep("open", ["/inputs.html"]);
   const click = await loep("press", ["css:#on-click"]);
@@ -1431,4 +1431,11 @@ test("press shows on which part of a press a function goes off, and whether it c
   assert.deepEqual(record.state.steps, []);
   assert.deepEqual(observation((await loep("status")).id).state.steps.map((step) => ({ command: step.command, options: step.options, target: step.target })), [{ command: "press", options: { abort: true }, target: ["#on-click"] }]);
   assert.equal((record.result as unknown as { mode: string }).mode, "abort");
+  // A temporary preview changed on down, and releasing elsewhere reversed that change.
+  await loep("open", ["/press.html"]);
+  const preview = await loep("press", ["css:#preview"], { abort: true });
+  assert.equal(preview.wentThrough, true);
+  assert.deepEqual(preview.down, { appeared: ["Dit is het voorbeeld."] });
+  assert.deepEqual(preview.afterAbort, { disappeared: 1 });
+  assert.match(preview.note as string, /om te zien of het effect bleef/);
 });
