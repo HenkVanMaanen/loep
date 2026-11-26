@@ -72,10 +72,14 @@ export function changedPlaces(first: PNG, second: PNG): { changed: number; box: 
   const height = Math.min(first.height, second.height);
   const columns = Math.ceil(width / CELL);
   const cells = new Map<number, { changed: number; box: Box }>();
+  const rowBytes = width * 4;
   for (let y = 0; y < height; y++) {
+    const firstRow = y * first.width * 4;
+    const secondRow = y * second.width * 4;
+    if (first.data.compare(second.data, secondRow, secondRow + rowBytes, firstRow, firstRow + rowBytes) === 0) continue;
     for (let x = 0; x < width; x++) {
-      const a = (y * first.width + x) * 4;
-      const b = (y * second.width + x) * 4;
+      const a = firstRow + x * 4;
+      const b = secondRow + x * 4;
       if (Math.abs(first.data[a]! - second.data[b]!) <= CHANNEL_TOLERANCE && Math.abs(first.data[a + 1]! - second.data[b + 1]!) <= CHANNEL_TOLERANCE && Math.abs(first.data[a + 2]! - second.data[b + 2]!) <= CHANNEL_TOLERANCE) continue;
       const key = Math.floor(y / CELL) * columns + Math.floor(x / CELL);
       const cell = cells.get(key);
@@ -125,16 +129,26 @@ export async function pixelMotion(page: Page, seconds: number): Promise<PixelMot
   const page_ = await page.evaluate(() => ({ height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0), scroll: [window.scrollX, window.scrollY] as [number, number] }));
   const fullPage = page_.height <= MAX_PAGE_HEIGHT;
   const started = Date.now();
-  const pictures: PNG[] = [];
+  const pictures: Buffer[] = [];
   for (let index = 0; index < PICTURES; index++) {
     if (index > 0) await page.waitForTimeout(pause);
-    pictures.push(PNG.sync.read(await page.screenshot({ animations: "allow", caret: "hide", fullPage })));
+    pictures.push(await page.screenshot({ animations: "allow", caret: "hide", fullPage }));
   }
   const observedMs = Date.now() - started;
   const changedPixels: number[] = [];
   let union: Box | null = null;
+  // Decode after sampling. Identical PNGs already prove that every pixel in the pair is equal.
+  let previous = PNG.sync.read(pictures[0]!);
   for (let index = 1; index < pictures.length; index++) {
-    const places = changedPlaces(pictures[index - 1]!, pictures[index]!).filter((place) => place.changed >= MIN_CHANGED);
+    const before = pictures[index - 1]!;
+    const after = pictures[index]!;
+    if (before.equals(after)) {
+      changedPixels.push(0);
+      continue;
+    }
+    const next = PNG.sync.read(after);
+    const places = changedPlaces(previous, next).filter((place) => place.changed >= MIN_CHANGED);
+    previous = next;
     changedPixels.push(places.reduce((sum, place) => sum + place.changed, 0));
     for (const place of places) union = around(union, place.box);
   }
