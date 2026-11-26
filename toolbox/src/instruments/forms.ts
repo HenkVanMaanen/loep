@@ -237,7 +237,7 @@ async function attemptSubmit(page: Page, input: Input, formIndex: number, state:
   const invalidFields: Attempt["invalidFields"] = [];
   for (const field of fieldsAfter.filter((entry) => entry.ariaInvalid || entry.nativeInvalid)) {
     const info = await axInfo(cdpAfter, field.ref);
-    invalidFields.push({ name: info?.name ?? null, describedBy: info?.description || null, browserValidation: field.nativeInvalid ? field.validationMessage : null });
+    invalidFields.push({ where: where(field), name: info?.name ?? null, describedBy: info?.description || null, browserValidation: field.nativeInvalid ? field.validationMessage : null });
   }
   await cdpAfter.detach();
   const focus = await call<Described | null>(page, "focusState");
@@ -315,7 +315,7 @@ export async function probeForms(page: Page, options: FormProbeOptions): Promise
     const fields: FormErrorState["fields"] = [];
     for (const field of report.fields) {
       const info = await axInfo(cdp, field.ref);
-      fields.push({ role: info?.role ?? field.tag, name: info?.name ?? null, required: field.required, type: field.type, invalidBeforeInput: field.ariaInvalid });
+      fields.push({ where: where(field), role: info?.role ?? field.tag, name: info?.name ?? null, required: field.required, type: field.type, invalidBeforeInput: field.ariaInvalid });
     }
     fieldsPerForm.push(fields);
   }

@@ -328,7 +328,7 @@ export interface FormErrorState {
   /** Where the form sends to: its method and the path of its action without the query. Null when it names no action; absent in an older run. */
   action?: string | null;
   openedVia: string | null;
-  fields: { role: string | null; name: string | null; required: boolean; type: string | null; invalidBeforeInput: boolean }[];
+  fields: { role: string | null; name: string | null; required: boolean; type: string | null; invalidBeforeInput: boolean; where?: string }[];
   submitControl: string | null;
   /** Whether filling in a field and leaving it changed the address or opened a window. */
   changeOnInput?: string;
@@ -344,7 +344,7 @@ export interface FormErrorState {
     titleAfterSubmit?: string;
     /** Set when the attempt could not be completed; nothing else in it was examined. */
     failed?: string;
-    invalidFields: { name: string | null; describedBy: string | null; browserValidation: string | null }[];
+    invalidFields: { name: string | null; describedBy: string | null; browserValidation: string | null; where?: string }[];
     newVisibleMessages: string[];
     liveRegionMessages: string[];
     /** What a simulated screen reader said by itself after the submission. Absent in older runs and when the submission replaced the page. */

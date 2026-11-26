@@ -197,3 +197,43 @@ test("the dossier says what the press probe and the key probe examined and what 
   assert.deepEqual(keys.states.map((row) => [row.state, row.reactions.map((reaction) => reaction.key)]), [["component-zoek", ["k"]]]);
   assert.equal((singleKeys({ ...run, states: { ...states, singleKeys: { ...states.singleKeys, states: undefined } } } as unknown as RunData, "2.1.4") as { states: { examined: boolean } }).states.examined, false);
 });
+
+test("error suggestions link fields to attempts by place, preserving unresolved or older evidence", async () => {
+  const { formErrors } = await import("../src/lib/extractors.ts");
+  type FormErrorState = import("../src/lib/rundata.ts").FormErrorState;
+  const field = (place: string, name: string, options: Record<string, unknown> = {}) => element("input", place, { inForm: true, required: false, type: "email", labelText: name, ...options });
+  const fields = [field("#email", "E-mail"), field("#ander-email", "E-mail"), field("#oud", "Oud e-mailadres"), field("#chat", "Bericht", { type: "text", visible: false }), field("#zoek", "Zoeken", { type: "search", inForm: false }), field("#verzend", "Verzenden", { type: "submit" })];
+  const run = withStates(runOf(page("P1", "https://site.nl/", { controls: fields })), [capturedState("component-chat"), capturedState("component-geen-meting")], {
+    "component-chat": { controls: fields.map((entry) => entry.path[0] === "#chat" ? { ...entry, visible: true } : entry) },
+  });
+  const invalidFields = [{ where: "#email", name: "E-mail", describedBy: null, browserValidation: "Gebruik een @." }];
+  const probe: FormErrorState = {
+    page: "P1", form: "#contact", openedVia: null, action: "post /contact", submitControl: "button \"Verzenden\"",
+    fields: [{ where: "#email", name: "E-mail", role: "textbox", required: false, type: "email", invalidBeforeInput: false }],
+    attempts: [
+      { input: "leeg verstuurd", submitted: true, requestBlocked: true, invalidFields: [], newVisibleMessages: ["Versturen is niet gelukt."], liveRegionMessages: [], focusAfterSubmit: null, screenshot: "states/leeg.png", outcome: { request: "tegengehouden", requests: ["POST /contact"], message: true, pageChanged: false, nothing: false, nl: "tegengehouden" } },
+      { input: "ongeldige invoer", submitted: true, requestBlocked: false, invalidFields, newVisibleMessages: ["Ongeldige invoer."], liveRegionMessages: [], focusAfterSubmit: null, screenshot: "states/ongeldig.png" },
+    ],
+  };
+  const chatProbe: FormErrorState = {
+    ...probe, form: "#chat-formulier", openedVia: "Chat openen", action: null,
+    fields: [{ ...probe.fields[0]!, where: "#chat", name: "Bericht", type: "text" }],
+    attempts: [{ ...probe.attempts[0]!, input: "ongeldige invoer", outcome: undefined }],
+  };
+  run.states = { examined: { triggers: 0, forms: 4, hoverTargets: 0 }, formErrors: [probe, chatProbe, { ...probe, form: "#oud-formulier", fields: [{ ...probe.fields[0]!, where: undefined, name: "Oud e-mailadres" }], attempts: [] }, { ...probe, form: "#onduidelijk", fields: [{ ...probe.fields[0]!, where: undefined }], attempts: [] }], dialogs: [], hover: [], singleKeys: { pagesExamined: 0, keysPressed: [], reactions: [] } };
+  type Match = { form: string; openedVia: string | null; match: string };
+  type Field = { where: string; active: boolean; formProbes: Match[] };
+  const evidence = formErrors(run, "3.3.3") as { defaultFields: Field[]; openStates: { fieldsRecorded: boolean; fields: Field[] }[]; forms: { attempts: (FormErrorState["attempts"][number] & { requests?: string[] })[] }[]; blockedAttempts: unknown[] };
+  assert.deepEqual(evidence.defaultFields.map(({ where, active, formProbes }) => [where, active, formProbes.map(({ match }) => match)]), [
+    ["#email", true, ["plek"]], ["#ander-email", true, []], ["#oud", true, ["naam"]], ["#chat", false, []], ["#zoek", true, []],
+  ]);
+  assert.deepEqual(evidence.openStates.map(({ fieldsRecorded, fields }) => [fieldsRecorded, fields.map(({ where }) => where)]), [[true, ["#chat"]], [false, []]]);
+  assert.deepEqual(evidence.openStates[0]!.fields[0]!.formProbes, [{ form: "#chat-formulier", openedVia: "Chat openen", match: "plek" }]);
+  assert.deepEqual(evidence.blockedAttempts, [
+    { page: "P1", form: "#contact", openedVia: null, action: "post /contact", input: "leeg verstuurd", requests: ["POST /contact"] },
+    { page: "P1", form: "#chat-formulier", openedVia: "Chat openen", action: null, input: "ongeldige invoer", requests: [] },
+  ]);
+  const [empty, invalid] = evidence.forms[0]!.attempts;
+  assert.deepEqual([empty!.requestBlocked, empty!.requests, empty!.newVisibleMessages], [true, ["POST /contact"], ["Versturen is niet gelukt."]]);
+  assert.deepEqual([invalid!.requestBlocked, invalid!.invalidFields, invalid!.newVisibleMessages, invalid!.screenshot], [false, invalidFields, ["Ongeldige invoer."], "states/ongeldig.png"]);
+});

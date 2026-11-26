@@ -1746,10 +1746,67 @@ function regularPath(forms: FormErrorState[]): { note: string; silentForms: numb
 }
 
 /** What a form does when it is submitted empty, with invalid input and the way a visitor fills it in; without permission the request itself is blocked. */
-export const formErrors: Extractor = (run) =>
-  run.states
-    ? { examined: true, method: "Elk formulier is leeg en met ongeldige invoer verstuurd, en daarna zoals een bezoeker het doet: de verplichte velden gevuld met de vaste testwaarden en de optionele leeg (zie `regularPath`). Het verzoek naar de server is tegengehouden, behalve op een testomgeving waar versturen mag. Vastgelegd is welke velden als ongeldig zijn gemarkeerd, welke tekst erbij kwam, wat er in live-regio's werd gemeld, waar de focus heen ging en of het versturen een uitkomst had (`outcome`).", formsExamined: run.states.examined.forms, stepsNotExamined: run.states.skipped ?? [], regularPath: regularPath(run.states.formErrors), afterFilledSubmit: afterFilledSubmit(run), forms: run.states.formErrors }
-    : NOT_EXAMINED;
+export const formErrors: Extractor = (run, criterion) => {
+  if (criterion === "3.3.3") return errorSuggestionEvidence(run);
+  if (!run.states) return NOT_EXAMINED;
+  return { examined: true, method: "Elk formulier is leeg en met ongeldige invoer verstuurd, en daarna zoals een bezoeker het doet: de verplichte velden gevuld met de vaste testwaarden en de optionele leeg (zie `regularPath`). Het verzoek naar de server is tegengehouden, behalve op een testomgeving waar versturen mag. Vastgelegd is welke velden als ongeldig zijn gemarkeerd, welke tekst erbij kwam, wat er in live-regio's werd gemeld, waar de focus heen ging en of het versturen een uitkomst had (`outcome`).", formsExamined: run.states.examined.forms, stepsNotExamined: run.states.skipped ?? [], regularPath: regularPath(run.states.formErrors), afterFilledSubmit: afterFilledSubmit(run), forms: run.states.formErrors };
+};
+
+const ERROR_SUGGESTION_FIELD_ROLES = ["textbox", "searchbox", "spinbutton", "combobox", "listbox", "checkbox", "radio", "switch", "slider"];
+
+/** Places to inspect for 3.3.3, alongside what the existing form probe actually saw there. */
+function errorSuggestionEvidence(run: RunData) {
+  const probes = run.states?.formErrors ?? [];
+  const inputFields = (controls: Facts["controls"]) => controls.filter((control) => {
+    if (control.tag === "input") return !["hidden", "button", "submit", "reset", "image"].includes(control.type?.toLowerCase() ?? "");
+    return control.tag === "select" || control.tag === "textarea" || ERROR_SUGGESTION_FIELD_ROLES.includes(control.roleAttr ?? control.ax?.role ?? "");
+  });
+  const active = (field: Facts["controls"][number]) => !field.disabled && (field.visible || field.labelVisible === true);
+  const fieldsByPage = new Map(run.pages.map((page) => [page.label, inputFields(page.facts.controls)]));
+  const describeField = (field: Facts["controls"][number], fields: Facts["controls"], page: string | null, inState: boolean) => {
+    const name = axName(field) || field.labelText || null;
+    const place = where(field);
+    const onPage = probes.filter((probe) => probe.page === page && (inState || probe.openedVia === null));
+    const exact = onPage.filter((probe) => probe.fields.some((entry) => entry.where === place && entry.type === field.type && entry.required === field.required));
+    // Old probes captured a name only. An ambiguous name never links records, even on one page.
+    const byName = exact.length === 0 && name && fields.filter((entry) => entry.type === field.type && (axName(entry) || entry.labelText) === name).length === 1
+      ? onPage.filter((probe) => probe.fields.some((entry) => entry.where === undefined && entry.name === name && entry.type === field.type && entry.required === field.required))
+      : [];
+    const matched = exact.length > 0 ? exact : byName.length === 1 ? byName : [];
+    return { where: place, name, tag: field.tag, type: field.type, required: field.required, inForm: field.inForm, active: active(field), formProbes: matched.map((probe) => ({ form: probe.form, openedVia: probe.openedVia, match: exact.length > 0 ? "plek" : "naam" })) };
+  };
+  const defaultFields = [...fieldsByPage].flatMap(([page, fields]) => fields.map((field) => ({ page, ...describeField(field, fields, page, false) })));
+  const fieldKey = (field: Facts["controls"][number]) => JSON.stringify([where(field), field.tag, field.type, axName(field), field.labelText, field.required, field.inForm]);
+  const openStates = reachedStates(run).map((state) => {
+    const page = run.pages.find((entry) => entry.item.url === state.url)?.label ?? null;
+    const controls = run.stateEvidence?.[state.id]?.controls;
+    const fields = inputFields(controls ?? []);
+    const visibleByDefault = new Set((page ? fieldsByPage.get(page) ?? [] : []).filter(active).map(fieldKey));
+    return { state: state.id, page, open: state.openWith ?? null, fieldsRecorded: controls !== undefined, fields: fields.filter((field) => active(field) && !visibleByDefault.has(fieldKey(field))).map((field) => describeField(field, fields, page, true)) };
+  });
+  return {
+    examined: run.states !== null,
+    method: "`defaultFields` noemt invoervelden per pagina, ook als ze daar verborgen of uitgeschakeld zijn (`active: false`). `openStates` noemt de actieve velden die er in een geopende toestand bij komen of daar veranderen. Dezelfde velden staan bij de begintoestand. `formProbes` verwijst naar pogingen bij dezelfde plek op dezelfde pagina. `match: naam` is alleen een aanwijzing uit een oudere run zonder vastgelegde veldplek. `openedVia` zegt waar de proef het formulier vond. In `blockedAttempts` staat bij welke pogingen de bewaking een verzoek tegenhield. `requests` kan ook andere verzoeken van de pagina bevatten, of leeg zijn bij een geblokkeerd chatbericht.",
+    formsExamined: run.states?.examined.forms ?? 0,
+    stepsNotExamined: run.states?.skipped ?? [],
+    defaultFields,
+    openStates,
+    blockedAttempts: probes.flatMap((probe) => probe.attempts.filter((attempt) => attempt.submitted && attempt.requestBlocked && !attempt.failed).map((attempt) => ({
+      page: probe.page, form: probe.form, openedVia: probe.openedVia, action: probe.action ?? null, input: attempt.input, requests: attempt.outcome?.requests ?? [],
+    }))),
+    forms: probes.map((probe) => ({
+      page: probe.page,
+      form: probe.form,
+      openedVia: probe.openedVia,
+      submitControl: probe.submitControl,
+      fields: probe.fields,
+      attempts: probe.attempts.map(({ input, submitted, requestBlocked, sent, navigated, urlAfterSubmit, failed, invalidFields, newVisibleMessages, screenshot, outcome }) => ({
+        input, submitted, requestBlocked, sent, navigated, urlAfterSubmit, failed, invalidFields, newVisibleMessages, screenshot,
+        request: outcome?.request, requests: outcome?.requests, nothing: outcome?.nothing, unfilled: outcome?.unfilled,
+      })),
+    })),
+  };
+}
 
 /** Per state whose recipe fills in a form: the messages that appeared when the sweep sent it, with their region and the focus (4.1.3). */
 function afterFilledSubmit(run: RunData): Record<string, unknown> {
