@@ -37,19 +37,27 @@ const contains = (outer: Box, inner: Box): boolean => outer.x <= inner.x && oute
 const nested = (first: Target, second: Target): boolean => contains(first.box, second.box) || contains(second.box, first.box);
 
 /** The spacing rule of WCAG 2.5.8 for one small target among all targets on the page. */
-export function tooClose(target: Target, all: Target[]): TargetMeasurement["tooCloseTo"] {
+export function spacingConflict<T extends Target>(target: T, all: T[]): { neighbour: T; distance: number } | null {
   const centre = { x: target.box.x + target.box.width / 2, y: target.box.y + target.box.height / 2 };
+  const place = where(target);
   const radius = MINIMUM_TARGET / 2;
   for (const other of all) {
-    if (other === target || where(other) === where(target) || nested(other, target)) continue;
+    if (other === target || nested(other, target) || where(other) === place) continue;
     const otherSmall = other.width < MINIMUM_TARGET || other.height < MINIMUM_TARGET;
     const nearestX = Math.max(other.box.x, Math.min(centre.x, other.box.x + other.box.width));
     const nearestY = Math.max(other.box.y, Math.min(centre.y, other.box.y + other.box.height));
     const toBox = Math.hypot(centre.x - nearestX, centre.y - nearestY);
     const toCentre = Math.hypot(centre.x - (other.box.x + other.box.width / 2), centre.y - (other.box.y + other.box.height / 2));
-    if (toBox < radius || (otherSmall && toCentre < 2 * radius)) return { tag: other.tag, text: other.text.slice(0, 40), where: where(other), distance: Math.round(Math.min(toBox, toCentre) * 10) / 10 };
+    if (toBox < radius || (otherSmall && toCentre < 2 * radius)) return { neighbour: other, distance: Math.round(Math.min(toBox, toCentre) * 10) / 10 };
   }
   return null;
+}
+
+export function tooClose(target: Target, all: Target[]): TargetMeasurement["tooCloseTo"] {
+  const conflict = spacingConflict(target, all);
+  if (!conflict) return null;
+  const { neighbour, distance } = conflict;
+  return { tag: neighbour.tag, text: neighbour.text.slice(0, 40), where: where(neighbour), distance };
 }
 
 /** Size of one target and the room around it. Null when the element is not a visible, enabled control. */
