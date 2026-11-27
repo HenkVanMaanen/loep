@@ -9,7 +9,8 @@ import { promisify } from "node:util";
 import type { Browser, Page } from "playwright";
 import { startFixture, type FixtureServer } from "../fixtures/serve.ts";
 import { useFixtureReads } from "../scripts/sweep-check.ts";
-import { launchBrowser, loadPage, newContext, settlePage } from "../src/browser/session.ts";
+import { INPAGE_PATH, launchBrowser, loadPage, newContext, settlePage } from "../src/browser/session.ts";
+import { distinctByColour } from "../src/instruments/distinct.ts";
 import { EXTRA_FIXED_READS_ENV, EXTRA_FIXED_READS_FILE, extraFixedReadProblems, fixedReadFor, fixedReads, fixedReadsUsed, loadFixedReads, readsAllowedNl, setFixedReads, useRunFixedReads } from "../src/lib/reads.ts";
 import { setRunScope } from "../src/session/safety.ts";
 
@@ -176,4 +177,73 @@ test("a session an agent starts on a run with the extra rules starts the survey,
   assert.equal(await survey(run(origin)), 0, "without the rules the session holds the start of the survey back");
   assert.ok((await survey(carrying)) > 0, "with the rules in the run the session lets the start of the survey through");
   assert.deepEqual(fixture.writes().slice(writes).map((entry) => entry.path), [], "the visit the survey reports stays held back");
+});
+
+
+test("the fixture plants a link identified only by colour and labels required fields only in red", async () => {
+  for (const variant of ["defect", "clean"] as const) {
+    const broken = variant === "defect";
+    const page = await sweepPage(`${fixture.origins[variant]}/contact.html`);
+    try {
+      await page.getByRole("button", { name: "Weigeren", exact: true }).evaluate((button) => (button as HTMLElement).click());
+      await page.addScriptTag({ path: INPAGE_PATH });
+      const path = await page.locator('main p a[href="/openingstijden.html"]').evaluate((element) => {
+        const library = (window as unknown as { __loep: { describe: (target: Element) => { path: string[] } } }).__loep;
+        return library.describe(element).path;
+      });
+      const link = await distinctByColour(page, path, null);
+      assert.ok(!("error" in link), JSON.stringify(link));
+      assert.equal(link.pair, "link-in-text");
+      const ink = link.visions.find((vision) => vision.vision === "normal")?.ink;
+      assert.ok(ink !== undefined && ink !== null && ink < 3, `${variant}: link-to-text contrast ${ink}`);
+      assert.deepEqual([link.other, link.lead], [broken ? [] : ["onderstreping"], broken]);
+
+      const marking = await page.evaluate(() => {
+        const required = document.querySelector('label[for="naam"]')!;
+        const optional = document.querySelector('label[for="datum"]')!;
+        return {
+          label: required.textContent,
+          differentColour: getComputedStyle(required).color !== getComputedStyle(optional).color,
+          redInstruction: document.querySelector("main")!.textContent!.includes("De rode velden moet u invullen."),
+        };
+      });
+      assert.deepEqual(marking, { label: broken ? "Naam" : "Naam (verplicht)", differentColour: broken, redInstruction: broken });
+    } finally {
+      await page.context().close();
+    }
+  }
+});
+
+test("the waste guide gives both bins the same shape and only the clean twin names the destinations", async () => {
+  const path = "/zoekdienst/multi_search";
+  const writes = fixture.writes().length;
+  for (const variant of ["defect", "clean"] as const) {
+    const origin = fixture.origins[variant];
+    setFixedReads([{ id: "afvalwijzer-test", method: "POST", origin, path, reasonNl: "De zoekdienst op deze lokale testsite leest alleen afvalinformatie." }]);
+    const page = await sweepPage(`${origin}/afval.html`);
+    try {
+      await page.getByRole("button", { name: "Weigeren", exact: true }).evaluate((button) => (button as HTMLElement).click());
+      // The fixture shows common results when a term returns no matches.
+      await page.locator("#afvalzoeker").fill("onbekend");
+      const results = page.locator(".afvalwijzer-resultaten li");
+      const items = ["Glazen potten", "Snoeiafval"].map((name) => results.filter({ hasText: name }));
+      const icons = await Promise.all(items.map(async (item) => {
+        const icon = item.locator("img.afval-bak");
+        const src = await icon.getAttribute("src", { timeout: 60_000 });
+        assert.ok(src);
+        const response = await page.request.get(new URL(src, origin).href);
+        assert.equal(response.status(), 200);
+        return response.text();
+      }));
+      assert.notEqual(icons[0], icons[1]);
+      const shape = (svg: string) => svg.replace(/ fill="[^"]+"/g, "");
+      assert.equal(shape(icons[0]!), shape(icons[1]!));
+      const names = await Promise.all(items.map((item) => item.locator(".afval-waar").allTextContents()));
+      assert.deepEqual(names, variant === "defect" ? [[], []] : [["Glasbak"], ["Groene container"]]);
+    } finally {
+      await page.context().close();
+      setFixedReads(null);
+    }
+  }
+  assert.deepEqual(fixture.writes().slice(writes), [], "the search still has no side effects");
 });
