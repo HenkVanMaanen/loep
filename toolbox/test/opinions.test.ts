@@ -3,14 +3,14 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 import { INPAGE_PATH } from "../src/browser/session.ts";
 import { capsule, ensureHelpers, packageSource } from "../src/instruments/methods/capsule.ts";
 import { compareOrders } from "../src/instruments/methods/taborder.ts";
 import { parseSnapshotLine } from "../src/instruments/methods/names.ts";
 import { binary, INJECTED_FAULTS, KNOWN_ERRORS, METHODS } from "../src/instruments/methods/registry.ts";
 import { runRuleEngines } from "../src/instruments/methods/rules.ts";
-import { changedBetween, changedPlaces } from "../src/instruments/methods/motion.ts";
+import { changedBetween, changedPlaces, pixelMotion } from "../src/instruments/methods/motion.ts";
 import { estimatedFontSize, fileAsShown, measureLine, pointedContrast } from "../src/instruments/methods/imagetext.ts";
 import { isLead, otherFeatures, ratiosOf, sideColours } from "../src/instruments/distinct.ts";
 import { enlarge, levelled, lineOf, mergeReadings, overlap, sparsePieces } from "../src/instruments/methods/ocr.ts";
@@ -548,6 +548,38 @@ test("motion sets the animation API against pictures taken over time", async () 
   assert.equal(still.moves, false);
   assert.equal(still.methods, "2 agree");
   assert.ok(size(motion) < 600);
+});
+
+test("motion keeps every pair and only counts a visible change above the noise threshold", async () => {
+  const still = new PNG({ width: 48, height: 48 });
+  still.data.fill(255);
+  const changed = new PNG({ width: 48, height: 48 });
+  still.data.copy(changed.data);
+  for (let y = 34; y < 39; y++) for (let x = 35; x < 39; x++) changed.data[(y * 48 + x) * 4] = 230;
+  const noise = new PNG({ width: 48, height: 48 });
+  still.data.copy(noise.data);
+  noise.data[0] = 0;
+  // A difference of 24 is within tolerance.
+  for (let x = 1; x < 48; x++) noise.data[x * 4] = 231;
+  const light = PNG.sync.write(still);
+  const dark = PNG.sync.write(changed);
+  const captures = [light, Buffer.from(light), dark, Buffer.from(dark), PNG.sync.write(noise), light];
+  const page = {
+    evaluate: async (_fn: unknown, argument?: unknown) => {
+      if (argument === "__loepm") return true;
+      if (Array.isArray(argument)) return null;
+      return { height: 7000, scroll: [12, 20] };
+    },
+    waitForTimeout: async () => undefined,
+    screenshot: async (options: { fullPage: boolean }) => {
+      assert.equal(options.fullPage, false);
+      return captures.shift();
+    },
+  } as unknown as Page;
+  const { observedMs, ...result } = await pixelMotion(page, 0.5);
+  assert.ok(observedMs >= 0);
+  assert.equal(captures.length, 0);
+  assert.deepEqual(result, { moves: true, changedPixels: [0, 20, 0, 20, 0], area: "window", region: { x: 47, y: 54, width: 4, height: 5 }, element: null });
 });
 
 test("spacing --keep leaves the wider spacing in force, so a button that only exists with it can be opened and looked at", async () => {

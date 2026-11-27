@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -33,8 +34,8 @@ after(async () => {
 
 type Print = Record<string, unknown> & { id: string };
 
-async function loep(command: string, args: (string | number)[] = [], options: Record<string, string | boolean> = {}): Promise<Print> {
-  const response = await daemon.handle({ op: "command", session: "main", command, args: args.map(String), options });
+async function loep(command: string, args: (string | number)[] = [], options: Record<string, string | boolean> = {}, sessionDaemon = daemon): Promise<Print> {
+  const response = await sessionDaemon.handle({ op: "command", session: "main", command, args: args.map(String), options });
   assert.equal(response.ok, true, `${command} ${args.join(" ")}: ${JSON.stringify(response.print)}`);
   return response.print as Print;
 }
@@ -50,11 +51,12 @@ interface Listened {
   section: { text: string; comparison: { coverage: number | null } | null };
   stills: { atSeconds: number; image: string; sha256: string; text: string | null; said: string | null }[];
   flashes: { quarterOfPicture: { perSecond: number }; note: string } | null;
+  notRead: string | null;
 }
 
-function observation(id: string): Observation & { result: Listened } {
+function observation(id: string, runDir = run): Observation & { result: Listened } {
   const [session, nr] = [id.slice(0, id.lastIndexOf("-")), id.slice(id.lastIndexOf("-") + 1)];
-  return JSON.parse(readFileSync(join(run, "observations", session, `${nr}.json`), "utf8")) as Observation & { result: Listened };
+  return JSON.parse(readFileSync(join(runDir, "observations", session, `${nr}.json`), "utf8")) as Observation & { result: Listened };
 }
 
 test("WebVTT is read as cues: time and text, without header, notes, numbers and markup", () => {
@@ -190,6 +192,59 @@ test("ffmpeg reads the tracks, the silence and the flashes of a file it made its
     await assert.rejects(probeMedia(join(dir, "bestaat-niet.mp4")));
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("media --listen distinguishes a planted full-frame flash from calm and unavailable video", async (context) => {
+  if (!(await binary("ffmpeg")).available) return context.skip("geen ffmpeg op deze machine");
+  const testRun = mkdtempSync(join(run, "flash-"));
+  const clip = (name: string, filter: string): Buffer => {
+    const path = join(testRun, name);
+    execFileSync(binaryCommand("ffmpeg"), ["-v", "error", "-f", "lavfi", "-i", filter, "-an", "-c:v", "libvpx", "-threads", "2", path]);
+    return readFileSync(path);
+  };
+  const gray = "color=c=gray:s=960x540:r=25:d=3";
+  const calm = clip("calm.webm", gray);
+  const flashing = clip("flashing.webm", `${gray},geq=lum='if(lt(mod(N,4),2),235,16)':cb=128:cr=128`);
+  const server = createServer((request, response) => {
+    const name = request.url?.slice(1);
+    if (name === "blocked.webm") return response.writeHead(403).end();
+    if (name === "calm.webm" || name === "flashing.webm") {
+      const bytes = name === "calm.webm" ? calm : flashing;
+      return response.writeHead(200, { "content-type": "video/webm", "content-length": bytes.length }).end(bytes);
+    }
+    if (name !== "calm" && name !== "flashing" && name !== "blocked") return response.writeHead(404).end();
+    return response.writeHead(200, { "content-type": "text/html" }).end(
+      `<!doctype html><title>Videoproef</title><video controls width="960" height="540" src="/${name}.webm"></video>`,
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const origin = `http://127.0.0.1:${address.port}`;
+  let testDaemon: Daemon | undefined;
+  try {
+    testDaemon = await Daemon.create(testRun, { hosts: [new URL(origin).host], baseUrl: origin, strict: false }, { navigationDelayMs: 0, secondBrowsers: false });
+    assert.equal((await testDaemon.handle({ op: "start", session: "main" })).ok, true);
+    for (const [name, bytes, flashes] of [["calm", calm, 0], ["flashing", flashing, 6], ["blocked", null, null]] as const) {
+      await loep("open", [`${origin}/${name}`], { width: "1280", height: "900" }, testDaemon);
+      const measured = await loep("style", ["css:video", "width,height"], {}, testDaemon);
+      assert.deepEqual(measured.style, { width: "960px", height: "540px" });
+      const listened = await loep("media", ["css:video"], { listen: true, wait: true }, testDaemon);
+      const record = observation(listened.id, testRun).result;
+      assert.equal(record.flashes?.quarterOfPicture.perSecond ?? null, flashes);
+      if (bytes !== null) {
+        assert.equal(record.file?.sha256, createHash("sha256").update(bytes).digest("hex"));
+        assert.equal(record.file.truncated, null);
+        assert.equal(record.notRead, null);
+      } else {
+        assert.equal(record.file, null);
+        assert.match(record.notRead ?? "", /403/);
+      }
+    }
+  } finally {
+    await testDaemon?.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
 

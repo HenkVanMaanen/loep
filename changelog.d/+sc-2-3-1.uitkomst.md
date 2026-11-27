@@ -1,0 +1,1 @@
+Loep verwerkt gelijk gebleven delen van een `motion`-meting sneller. Bij 2.3.1 kunnen zichtbare onderdelen op dezelfde pagina en in dezelfde toestand het bewijs uit één meting delen. Een open vraag over de flitsfrequentie of ongedekte inhoud blijft open.
