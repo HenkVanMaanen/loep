@@ -1,0 +1,1 @@
+Het dossier voor Gebruik van kleur toont waar zichtbare links in pagina's en geopende toestanden zijn gevonden. De beoordeling gebruikt de vastgelegde beelden en meet linkkleuren opnieuw waar een ander zichtbaar kenmerk onduidelijk blijft.
