@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
+import { startFixture } from "../fixtures/serve.ts";
+import type { TargetMeasurement } from "../src/instruments/target.ts";
+import { Daemon } from "../src/session/daemon.ts";
 import { targetSize } from "../src/lib/extractors.ts";
 import type { PageData, RunData } from "../src/lib/rundata.ts";
 
@@ -59,4 +65,45 @@ test("2.5.8 anchors scope gaps to recorded GET refusals of frames that count", (
   const extract = (data: RunData) => (targetSize(data, "2.5.8") as { framesBlockedByScope: unknown[] }).framesBlockedByScope;
   assert.deepEqual(extract(run), [{ address: "https://vendor.example/check", descriptionNl: "Controle", pages: ["P1"], states: ["process"] }]);
   assert.deepEqual(extract({ ...run, siteStates: null }), []);
+});
+
+test("2.5.8 finds the planted pagination spacing defect at wide and narrow widths", async (context) => {
+  const run = mkdtempSync(join(tmpdir(), "loep-target-size-"));
+  const site = await startFixture({
+    ports: { defect: 0, clean: 0, thirdParty: 0 },
+    logFile: join(run, "server.log"),
+  });
+  let daemon: Daemon | undefined;
+  context.after(async () => {
+    await daemon?.close();
+    await site.close();
+    rmSync(run, { recursive: true, force: true });
+  });
+  daemon = await Daemon.create(run, {
+    hosts: [new URL(site.origins.defect).host, new URL(site.origins.clean).host],
+    baseUrl: site.origins.defect,
+    strict: false,
+  }, { navigationDelayMs: 50, secondBrowsers: false });
+  const session = "pagination";
+  assert.equal((await daemon.handle({ op: "start", session })).ok, true);
+
+  for (const [variant, largeEnough, gap] of [["defect", false, 3], ["clean", true, 8]] as const) {
+    for (const width of [1280, 320]) {
+      const opened = await daemon.handle({ op: "command", session, command: "open", args: [site.origins[variant] + "/nieuws/"], options: { width: String(width) } });
+      assert.equal(opened.ok, true, JSON.stringify(opened.print));
+      const measured = await daemon.handle({ op: "command", session, command: "target", args: ["css:.paginering li:nth-child(2) a"], options: { wait: true } });
+      assert.equal(measured.ok, true, JSON.stringify(measured.print));
+      const number = (measured.print.id as string).split("-").at(-1);
+      const observation = JSON.parse(readFileSync(join(run, "observations", session, number + ".json"), "utf8")) as {
+        result: { methods: { method: string; result: TargetMeasurement }[] };
+      };
+      const layout = observation.result.methods.find(({ method }) => method === "layout-box")?.result;
+      assert.ok(layout);
+      assert.equal(layout.inlineInText, false);
+      assert.equal(layout.largeEnough, largeEnough);
+      assert.equal(layout.nearest?.gap, gap);
+      assert.match(layout.nearest?.text ?? "", /^Pagina [13]$/);
+      assert.equal(Boolean(layout.tooCloseTo), !largeEnough);
+    }
+  }
 });
