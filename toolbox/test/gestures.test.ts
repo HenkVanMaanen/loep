@@ -22,7 +22,8 @@ before(async () => {
   fixture = await startFixture({ ports: { defect: 0, clean: 0, thirdParty: 0 }, logFile: join(scratch, "server.log") });
   run = join(scratch, "run");
   const origin = fixture.origins.defect;
-  daemon = await Daemon.create(run, { hosts: [new URL(origin).host], baseUrl: `${origin}/`, strict: false }, { navigationDelayMs: 50, maxSessions: 1, secondBrowsers: false });
+  const hosts = [origin, fixture.origins.clean].map((site) => new URL(site).host);
+  daemon = await Daemon.create(run, { hosts, baseUrl: `${origin}/`, strict: false }, { navigationDelayMs: 50, maxSessions: 1, secondBrowsers: false });
   assert.equal((await daemon.handle({ op: "start", session: "main" })).ok, true);
 });
 
@@ -90,15 +91,29 @@ test("swipe without a direction is refused and costs nothing", async () => {
   assert.equal((await loep("status")).commands, before);
 });
 
-test("drag on the price slider of the products page changes the number of products", async () => {
+test("the planted 2.5.7 slider filters products on drag and ignores a single track click", async () => {
   await loep("open", ["/producten.html"]);
   assert.match((await found("css:.aantal"))[0]!, /6 producten gevonden/);
+  assert.match((await found("css:.schuif-waarde"))[0]!, /150 euro/);
   const thumb = await ref("css:.schuif-knop");
   const dragged = await loep("drag", [thumb, -150, 0]);
   assert.match(String(dragged.dragged), /^-150, 0 pixels/);
   const count = (await found("css:.aantal"))[0]!;
   assert.doesNotMatch(count, /6 producten gevonden/, JSON.stringify(dragged));
   assert.match(count, /\d producten? gevonden/);
+
+  await loep("open", ["/producten.html"]);
+  await loep("click", [await ref("css:.schuif-spoor")]);
+  assert.match((await found("css:.schuif-waarde"))[0]!, /150 euro/);
+  assert.match((await found("css:.aantal"))[0]!, /6 producten gevonden/);
+});
+
+test("one click on the clean price range changes the maximum price", async () => {
+  await loep("open", [`${fixture.origins.clean}/producten.html`]);
+  await loep("click", [await ref("css:[data-keuze=weigeren]")]);
+  assert.match((await found("css:.schuif-waarde"))[0]!, /150 euro/);
+  await loep("click", [await ref("css:#maxprijs")]);
+  assert.match((await found("css:.schuif-waarde"))[0]!, /\b(?:\d{1,2}|1[0-4]\d) euro\b/);
 });
 
 test("drag --to drags onto a second element, and the step keeps the shift so that a fresh page does the same", async () => {

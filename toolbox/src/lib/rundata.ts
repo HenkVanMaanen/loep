@@ -1,4 +1,5 @@
 import type { FrameListeners, FrameNotInspected } from "../instruments/facts.ts";
+import type { DragReport } from "../instruments/drag.ts";
 import type { ScreenshotClip } from "../browser/screenshot.ts";
 import type { MediaReport } from "../instruments/media.ts";
 import type { ContentInventory, SpacingControls } from "../instruments/overflow.ts";
@@ -38,6 +39,7 @@ export interface SkipLinkAim {
 }
 
 export interface StateEvidence {
+  dragging?: DragReport;
   /** Audio and video as they were in this state. Absent in older runs. */
   media?: MediaReport;
   engines: EngineRun;
@@ -187,6 +189,8 @@ export interface Facts {
   listeners: Record<string, Record<string, number>>;
   /** The same count for every frame on the page, read on the spot. Absent in older runs. */
   frameListeners?: FrameListeners[];
+  /** How the page and the frames could be dragged as they were collected. Absent in older runs. */
+  dragging?: DragReport;
   /** Frames whose listeners could not be counted, by address. Absent in older runs. */
   framesNotInspected?: FrameNotInspected[];
   /** Audio and video in this state of the page. Absent in older runs. */
@@ -266,7 +270,7 @@ export interface PageData {
   /** The page at 320 pixels wide: target sizes, links and controls with their names, and the wider text spacing. Absent in older runs. */
   smallest?: { viewport: { width: number; height: number }; targets: PageData["targets"]; links: Facts["links"]; controls: Facts["controls"]; textspacing: PageData["textspacing"] };
   /** Links and controls as they are in the narrow window of 360 pixels wide, where the narrow Tab walk was done. Absent in older runs. */
-  narrow?: { links: Facts["links"]; controls: Facts["controls"] };
+  narrow?: { links: Facts["links"]; controls: Facts["controls"]; dragging?: DragReport };
   /** The forms and loose controls of the page, in the default window and what the narrow one adds. Absent in older runs. */
   operables?: OperableGroup[];
   /** Every host the page asked something of on a plain load in the default window, its own included. Absent in older runs. */
@@ -579,6 +583,7 @@ export async function loadRun(dir: string): Promise<RunData> {
         engines: await readJson(join(dir, state.files.engines)),
         contrast: await readJson(join(dir, state.files.contrast)),
         ...(facts?.media ? { media: facts.media } : {}),
+        ...(facts?.dragging ? { dragging: facts.dragging } : {}),
         ...(facts ? { links: facts.links, controls: facts.controls, timers: facts.timers, images: facts.images, backgroundImages: facts.backgroundImages } : {}),
         ...(await optional("contrastDark", "contrastDark")),
         ...(await optional("targets", "targets")),

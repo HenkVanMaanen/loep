@@ -12,6 +12,7 @@ import { enginesToRetry, runEngines, type EngineRun } from "../lib/engines.ts";
 import { stepStart, writeManifest } from "../lib/manifest.ts";
 import { ProgressFile } from "../lib/progress.ts";
 import { collectFacts, collectNamed } from "../instruments/facts.ts";
+import { dragReport } from "../instruments/drag.ts";
 import { arrowReach, skipLinkProbe, tabWalk } from "../instruments/keyboard.ts";
 import { mediaReport } from "../instruments/media.ts";
 import { pageOperables } from "../instruments/operables.ts";
@@ -275,7 +276,7 @@ async function collectPage(browser: Browser, entry: SampleItem, runDir: string, 
         await writeJson(join(dir, "probes", "overlays-narrow.json"), await sweep.overlays(page));
         await writeJson(join(dir, "probes", "operables-narrow.json"), await pageOperables(page));
         // What there is to reach with Tab in this window: the walk below is laid next to it.
-        await writeJson(join(dir, "probes", "named-narrow.json"), { ...(await collectNamed(page)), ...(narrowShot.clippedAt ? { screenshotClippedAt: narrowShot.clippedAt } : {}) });
+        await writeJson(join(dir, "probes", "named-narrow.json"), { ...(await collectNamed(page)), dragging: await dragReport(page), ...(narrowShot.clippedAt ? { screenshotClippedAt: narrowShot.clippedAt } : {}) });
         const walk = await tabWalk(page, { continueAfterFocusLoss: true, fromTop: true, focusDir: join(dir, "probes", "focus-narrow"), focusPath: "probes/focus-narrow", orderPicture: join(dir, "probes", "tabwalk-narrow.png") });
         await writeJson(join(dir, "probes", "tabwalk-narrow.json"), walk);
         summary["tabwalk-narrow"] = { outcome: walk.outcome, stops: walk.stopCount };

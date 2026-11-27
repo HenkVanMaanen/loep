@@ -1,4 +1,5 @@
 import type { MediaElement, MediaReport } from "../instruments/media.ts";
+import type { DragReport } from "../instruments/drag.ts";
 import type { ContentInventory } from "../instruments/overflow.ts";
 import { contrastRatio, floorRatio, type Rgb } from "./contrast.ts";
 import { acceptedGapFor, frameStanding, NOT_OPENED_ON_PAGE_TYPE } from "./sitemodel.ts";
@@ -1680,6 +1681,52 @@ export const pointer: Extractor = (run) => ({
     : { examined: false },
 });
 
+const DRAG_EVENTS = ["dragstart", "drag", "dragend", "dragenter", "dragover", "dragleave", "drop", "pointermove", "pointerrawupdate", "mousemove", "touchmove"];
+
+/** Evidence for dragging stays separate from the press probe: a release elsewhere proves no drag function. */
+export const dragging: Extractor = (run) => {
+  const documents = (report: DragReport | undefined, refusals: NonNullable<Captured["refused"]> = []): Record<string, unknown> => {
+    if (!report) return { measured: false };
+    return {
+      measured: true,
+      ...report.document,
+      frames: report.frames.map((frame) => {
+        if (!("notReadNl" in frame) || !/^https?:\/\//.test(frame.address)) return frame;
+        const url = new URL(frame.address);
+        return refusals.some((refused) => refused.kind === "scope" && refused.address === `${url.host}${url.pathname}`) ? { ...frame, blockedByScope: true } : frame;
+      }),
+    };
+  };
+  const pages = run.pages.map((page) => ({
+    page: page.label,
+    ...(page.facts.collectError || page.facts.notLoaded?.length || frameNotLoaded(page, run) ? { incomplete: true } : {}),
+    standard: documents(page.facts.dragging),
+    narrow: documents(page.narrow?.dragging),
+    ...(!page.facts.dragging ? {
+      legacy: {
+        frames: page.facts.iframes.map((frame) => ({ address: frame.src, title: frame.title, rendered: frame.visible })),
+        roles: page.facts.controls.filter((row) => ["slider", "scrollbar", "separator"].includes(row.ax?.role ?? row.roleAttr ?? "")).map((row) => ({ where: where(row), tag: row.tag, role: row.ax?.role ?? row.roleAttr, label: axName(row) || row.text })),
+        customElements: page.facts.counts.customElements ?? [],
+      },
+    } : {}),
+  }));
+  const states = (run.siteStates?.states ?? []).map((state) => ({
+    state: state.id, reached: state.reached,
+    viewport: state.viewport ? `${state.viewport.width}x${state.viewport.height}` : null,
+    ...(state.reasonNl ? { notReachedNl: state.reasonNl } : {}),
+    ...(state.notLoaded?.length || state.frame?.measuredInFrame === false ? { incomplete: true } : {}),
+    ...documents(run.stateEvidence?.[state.id]?.dragging, state.refused),
+  }));
+  return {
+    method: "In de browser gelezen bij de veegronde. Per document staan mogelijke begin- en eindpunten van slepen en maximaal vijf knoppen of velden in hetzelfde onderdeel of via aria-controls. Dit zijn aanwijzingen. Loep heeft hier geen beweging of klik uitgevoerd. Registraties voor beweging zijn vanaf het laden gevolgd, ook na het openen van een toestand. Inline handlers en handlereigenschappen zijn gelezen. Een registratie kan inmiddels verwijderd zijn. Een handler die pas na het indrukken ontstaat, gesloten schaduwbomen en andere onbereikbare inhoud kunnen buiten beeld blijven.",
+    browserListenersSubtracted: run.states?.browserListeners !== undefined,
+    draggableElementsInInventory: run.inventory.totals.draggable ?? 0,
+    moveListenersAtLoad: listenerTable(run, DRAG_EVENTS),
+    pages,
+    states,
+  };
+};
+
 /**
  * Embedded players whose single-key shortcuts are documented: the address of the frame says
  * whether the site switched them off. That can be read without the player loading.
@@ -2200,6 +2247,7 @@ export const EXTRACTORS: Record<string, Extractor> = {
   motion,
   timing,
   pointer,
+  dragging,
   keyShortcuts,
   legend,
   engine,
